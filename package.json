@@ -45,8 +45,10 @@
     "url": "git+https://github.com/intlify/rollup-plugin-vue-i18n.git"
   },
   "scripts": {
+    "build": "echo 'build!'",
+    "lint": "echo 'lint!'",
     "release:prepare": "shipjs prepare",
     "release:trigger": "shipjs trigger",
-    "test": "echo test"
+    "test": "echo 'test!'"
   }
 }
