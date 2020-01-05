@@ -1,9 +1,13 @@
 import { Plugin } from 'rollup'
 
+import { debug as Debug } from 'debug'
+const debug = Debug('rollup-plugin-vue-i18n')
+
 export default function i18n (): Plugin {
   return {
     name: 'rollup-plugin-vue-i18n',
     transform (source: string, id: string) {
+      debug('transform id', id)
       if (/rollup-plugin-vue=i18n/i.test(id)) {
         return {
           code:
