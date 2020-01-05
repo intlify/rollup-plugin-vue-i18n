@@ -1,5 +1,6 @@
 coverage
 node_modules
+example/components.esm.js
 .DS_Store
 lib
 *.log
