@@ -24,8 +24,21 @@
     }
   },
   "devDependencies": {
+    "@types/jest": "^24.0.25",
+    "@types/node": "^13.1.4",
+    "@typescript-eslint/eslint-plugin": "^2.14.0",
+    "@typescript-eslint/parser": "^2.14.0",
+    "@typescript-eslint/typescript-estree": "^2.14.0",
+    "eslint": "^6.8.0",
+    "eslint-plugin-vue-libs": "^4.0.0",
+    "jest": "^24.9.0",
+    "jest-watch-typeahead": "^0.4.2",
     "lerna-changelog": "^1.0.0",
-    "shipjs": "0.13.1"
+    "opener": "^1.5.1",
+    "shipjs": "0.13.1",
+    "ts-jest": "^24.2.0",
+    "typescript": "^3.7.4",
+    "typescript-eslint-language-service": "^2.0.3"
   },
   "engines": {
     "node": ">= 10"
@@ -39,16 +52,22 @@
     "vue-i18n"
   ],
   "license": "MIT",
-  "main": "index.js",
+  "main": "lib/index.js",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/intlify/rollup-plugin-vue-i18n.git"
   },
   "scripts": {
-    "build": "echo 'build!'",
-    "lint": "echo 'lint!'",
+    "build": "tsc -p .",
+    "build:watch": "tsc -p . --watch",
+    "clean": "rm -rf ./coverage",
+    "coverage": "opener coverage/lcov-report/index.html",
+    "lint": "eslint ./src ./test --ext .ts",
     "release:prepare": "shipjs prepare",
     "release:trigger": "shipjs trigger",
-    "test": "echo 'test!'"
+    "test": "npm run lint && npm run test:cover",
+    "test:cover": "npm run test:unit -- --coverage",
+    "test:unit": "jest --env node",
+    "test:watch": "jest --env node --watch"
   }
 }
