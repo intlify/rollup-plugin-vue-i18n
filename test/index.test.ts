@@ -38,8 +38,8 @@ async function setupRollup () {
       })
     ]
   })
-  .then(bundle => bundle.generate({ format: 'es' }))
-  .then(generated => generated.output[0])
+    .then(bundle => bundle.generate({ format: 'es' }))
+    .then(generated => generated.output[0])
 }
 
 test('basic', async () => {
