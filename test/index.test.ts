@@ -3,7 +3,7 @@ import VuePlugin from 'rollup-plugin-vue'
 import JSONPlugin from '@rollup/plugin-json'
 import YAMLPlugin from '@rollup/plugin-yaml'
 import I18nPlugin from '../src/index'
-import { pluginInline } from './utils'
+import { pluginInline as InlinePlugin } from './utils'
 
 async function setupRollup (options: any = {}) {
   const i18nLang = options.lang || 'json'
@@ -20,7 +20,7 @@ async function setupRollup (options: any = {}) {
   return rollup({
     input: '/entry.vue',
     plugins: [
-      pluginInline(
+      InlinePlugin(
         '/entry.vue',
         `
 <template>
@@ -31,7 +31,7 @@ export default {
   name: 'Entry'
 }
 </script>
-<i18n locale="foo" lang="${i18nLang}">
+<i18n lang="${i18nLang}">
 ${i18nLocaleMessages}
 </i18n>
 `
