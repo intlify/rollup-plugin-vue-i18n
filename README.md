@@ -1,4 +1,4 @@
-# :globe_with_meridians: rollup-plugin-vue-i18n
+# :globe_with_meridians: @intlify/rollup-plugin-vue-i18n
 
 [![CircleCI](https://circleci.com/gh/intlify/rollup-plugin-vue-i18n.svg?style=svg)](https://circleci.com/gh/intlify/rollup-plugin-vue-i18n)
 [![npm](https://img.shields.io/npm/v/@intlify/rollup-plugin-vue-i18n.svg)](https://www.npmjs.com/package/@intlify/rollup-plugin-vue-i18n)
