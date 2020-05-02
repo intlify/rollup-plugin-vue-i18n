@@ -1,5 +1,6 @@
 # :globe_with_meridians: @intlify/rollup-plugin-vue-i18n
 
+![Test](https://github.com/intlify/rollup-plugin-vue-i18n/workflows/Test/badge.svg)
 [![npm](https://img.shields.io/npm/v/@intlify/rollup-plugin-vue-i18n.svg)](https://www.npmjs.com/package/@intlify/rollup-plugin-vue-i18n)
 
 vue-i18n rollup plugin for custom blocks
