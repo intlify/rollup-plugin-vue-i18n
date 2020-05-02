@@ -1,4 +1,13 @@
 
+## v1.0.0 (2020-05-02)
+
+#### :boom: Breaking Change
+* [#17](https://github.com/intlify/rollup-plugin-vue-i18n/pull/17) breaking: upgrade rollup and related plugins ([@kazupon](https://github.com/kazupon))
+
+#### Committers: 1
+- kazuya kawaguchi ([@kazupon](https://github.com/kazupon))
+
+
 ## v0.1.0 (2020-01-05)
 
 #### :star: Features
