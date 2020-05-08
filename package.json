@@ -33,7 +33,7 @@
     "@typescript-eslint/parser": "^2.30.0",
     "@typescript-eslint/typescript-estree": "^2.30.0",
     "debug": "^4.1.1",
-    "eslint": "^6.8.0",
+    "eslint": "^7.0.0",
     "eslint-plugin-vue-libs": "^4.0.0",
     "jest": "^25.5.4",
     "jest-watch-typeahead": "^0.6.0",
