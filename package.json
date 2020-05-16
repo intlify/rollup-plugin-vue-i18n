@@ -35,7 +35,7 @@
     "debug": "^4.1.1",
     "eslint": "^7.0.0",
     "eslint-plugin-vue-libs": "^4.0.0",
-    "jest": "^25.5.4",
+    "jest": "^26.0.0",
     "jest-watch-typeahead": "^0.6.0",
     "lerna-changelog": "^1.0.0",
     "opener": "^1.5.1",
