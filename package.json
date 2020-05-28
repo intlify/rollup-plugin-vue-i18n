@@ -24,31 +24,37 @@
     }
   },
   "devDependencies": {
-    "@rollup/plugin-json": "^4.0.3",
-    "@rollup/plugin-yaml": "^2.1.0",
     "@types/debug": "^4.1.5",
     "@types/jest": "^25.2.1",
+    "@types/js-yaml": "^3.12.4",
+    "@types/json5": "^0.0.30",
     "@types/node": "^13.13.4",
-    "@typescript-eslint/eslint-plugin": "^2.30.0",
-    "@typescript-eslint/parser": "^2.30.0",
-    "@typescript-eslint/typescript-estree": "^2.30.0",
+    "@typescript-eslint/eslint-plugin": "^3.0.0",
+    "@typescript-eslint/parser": "^3.0.0",
+    "@typescript-eslint/typescript-estree": "^3.0.0",
+    "@vue/compiler-sfc": "^3.0.0-beta.14",
     "debug": "^4.1.1",
-    "eslint": "^7.0.0",
+    "eslint": "^7.1.0",
+    "eslint-config-prettier": "^6.10.1",
+    "eslint-plugin-prettier": "^3.1.2",
+    "eslint-plugin-vue": "^7.0.0-alpha.4",
     "eslint-plugin-vue-libs": "^4.0.0",
-    "jest": "^25.5.4",
+    "jest": "^26.0.0",
+    "jest-puppeteer": "^4.4.0",
     "jest-watch-typeahead": "^0.6.0",
+    "jsdom": "^16.0.0",
     "lerna-changelog": "^1.0.0",
+    "npm-run-all": "^4.1.5",
     "opener": "^1.5.1",
+    "puppeteer": "^2.1.1",
     "rollup": "^2.7.0",
-    "rollup-plugin-vue": "^5.1.4",
+    "rollup-plugin-vue": "git://github.com/vuejs/rollup-plugin-vue.git#0720102dd5d023a19bb720329cc84d91c5d88f7c",
     "shipjs": "^0.19.0",
     "ts-jest": "^26.0.0",
-    "typescript": "^3.8.3",
-    "typescript-eslint-language-service": "^2.1.8",
-    "vue-template-compiler": "^2.6.11"
-  },
-  "peerDependencies": {
-    "vue-template-compiler": "^2.6"
+    "typescript": "^3.9.3",
+    "typescript-eslint-language-service": "^2.0.3",
+    "vue": "^3.0.0-beta.14",
+    "vue-i18n": "^9.0.0-alpha.9"
   },
   "engines": {
     "node": ">= 10"
@@ -68,17 +74,29 @@
     "url": "git+https://github.com/intlify/rollup-plugin-vue-i18n.git"
   },
   "scripts": {
+    "postinstall": "cd ./node_modules/rollup-plugin-vue && yarn && yarn build && cd ../../",
     "build": "tsc -p .",
-    "build:example": "npm run build && rollup -c ./example/rollup.config.js",
-    "build:watch": "tsc -p . --watch",
-    "clean": "rm -rf ./coverage && rm -rf ./example/app.js",
+    "build:example": "yarn build && rollup -c ./example/basic/rollup.config.js",
+    "watch": "tsc -p . --watch",
+    "clean": "npm-run-all clean:*",
+    "clean:example": "rm -rf ./example/components.esm.js",
+    "clean:coverage": "rm -rf ./coverage",
     "coverage": "opener coverage/lcov-report/index.html",
+    "fix": "npm-run-all --parallel lint:fix format:fix",
+    "format": "prettier --config .prettierrc --ignore-path .prettierignore '**/*.{js,json,html}'",
+    "format:fix": "yarn format --write",
     "lint": "eslint ./src ./test --ext .ts",
+    "lint:fix": "yarn lint --fix",
     "release:prepare": "shipjs prepare",
     "release:trigger": "shipjs trigger",
-    "test": "npm run lint && npm run test:cover",
-    "test:cover": "npm run test:unit -- --coverage",
+    "test": "npm-run-all lint test:cover",
+    "test:cover": "yarn test:unit --coverage",
     "test:unit": "jest --env node",
     "test:watch": "jest --env node --watch"
+  },
+  "dependencies": {
+    "js-yaml": "^3.14.0",
+    "json5": "^2.1.3",
+    "rollup-pluginutils": "^2.8.2"
   }
 }

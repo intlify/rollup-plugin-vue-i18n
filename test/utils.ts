@@ -1,15 +1,15 @@
 import { Plugin } from 'rollup'
 
-export function pluginInline (filename: string, code: string): Plugin {
+export function pluginInline(filename: string, code: string): Plugin {
   return {
     name: 'inline',
-    resolveId (id: string) {
+    resolveId(id: string) {
       if (id === filename) {
         return filename
       }
       return null
     },
-    load (id: string) {
+    load(id: string) {
       if (id === filename) {
         return code
       }
