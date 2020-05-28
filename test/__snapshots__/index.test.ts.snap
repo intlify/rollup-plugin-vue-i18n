@@ -1,7 +1,7 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
-exports[`basic 1`] = `
-"import { normalizeComponent } from 'vue-runtime-helpers';
+exports[`json 1`] = `
+"import { openBlock, createBlock, toDisplayString } from 'vue';
 
 //
 //
@@ -12,72 +12,58 @@ var script = {
   name: 'Entry'
 };
 
-var en = {
-	hello: \\"hello!\\"
-};
-var ja = {
-	hello: \\"こんにちは！\\"
-};
-const __i18n = {
-	en: en,
-	ja: ja
-};
+function render(_ctx, _cache) {
+  return (openBlock(), createBlock(\\"p\\", null, toDisplayString(_ctx.$t('hello')), 1 /* TEXT */))
+}
+
 function i18n(Component) {
   const options = typeof Component === 'function' ? Component.options : Component;
   options.__i18n = options.__i18n || [];
-  options.__i18n.push(JSON.stringify(__i18n));
+  options.__i18n.push({\\"en\\":{\\"hello\\":\\"hello!\\"},\\"ja\\":{\\"hello\\":\\"こんにちは！\\"}});
 }
 
-/* script */
-const __vue_script__ = script;
+if (typeof i18n === 'function') i18n(script);
 
-/* template */
-var __vue_render__ = function() {
-  var _vm = this;
-  var _h = _vm.$createElement;
-  var _c = _vm._self._c || _h;
-  return _c(\\"p\\", [_vm._v(_vm._s(_vm.$t(\\"hello\\")))])
+script.render = render;
+script.__file = \\"entry.vue\\";
+
+export default script;
+"
+`;
+
+exports[`json5 1`] = `
+"import { openBlock, createBlock, toDisplayString } from 'vue';
+
+//
+//
+//
+//
+
+var script = {
+  name: 'Entry'
 };
-var __vue_staticRenderFns__ = [];
-__vue_render__._withStripped = true;
 
-  /* style */
-  const __vue_inject_styles__ = undefined;
-  /* scoped */
-  const __vue_scope_id__ = undefined;
-  /* module identifier */
-  const __vue_module_identifier__ = undefined;
-  /* functional template */
-  const __vue_is_functional_template__ = false;
-  /* style inject */
-  
-  /* style inject SSR */
-  
-  /* style inject shadow dom */
-  
+function render(_ctx, _cache) {
+  return (openBlock(), createBlock(\\"p\\", null, toDisplayString(_ctx.$t('hello')), 1 /* TEXT */))
+}
 
-  
-  const __vue_component__ = normalizeComponent(
-    { render: __vue_render__, staticRenderFns: __vue_staticRenderFns__ },
-    __vue_inject_styles__,
-    __vue_script__,
-    __vue_scope_id__,
-    __vue_is_functional_template__,
-    __vue_module_identifier__,
-    false,
-    undefined,
-    undefined,
-    undefined
-  );
-i18n(__vue_component__);
+function i18n(Component) {
+  const options = typeof Component === 'function' ? Component.options : Component;
+  options.__i18n = options.__i18n || [];
+  options.__i18n.push({\\"en\\":{\\"hello\\":\\"hello!\\"},\\"ja\\":{\\"hello\\":\\"こんにちは！\\"}});
+}
 
-export default __vue_component__;
-export { en, ja };
+if (typeof i18n === 'function') i18n(script);
+
+script.render = render;
+script.__file = \\"entry.vue\\";
+
+export default script;
 "
 `;
 
 exports[`yaml 1`] = `
-"import { normalizeComponent } from 'vue-runtime-helpers';
+"import { openBlock, createBlock, toDisplayString } from 'vue';
 
 //
 //
@@ -88,61 +74,28 @@ var script = {
   name: 'Entry'
 };
 
-var data = { en:{ hello:\\"hello!\\" },
-  ja:{ hello:\\"こんにちは！\\" } };
-
-const __i18n = data;
-var en = data.en;
-var ja = data.ja;function i18n(Component) {
-  const options = typeof Component === 'function' ? Component.options : Component;
-  options.__i18n = options.__i18n || [];
-  options.__i18n.push(JSON.stringify(__i18n));
+function render(_ctx, _cache) {
+  return (openBlock(), createBlock(\\"p\\", null, toDisplayString(_ctx.$t('hello')), 1 /* TEXT */))
 }
 
-/* script */
-const __vue_script__ = script;
+function i18n(Component) {
+  const options = typeof Component === 'function' ? Component.options : Component;
+  options.__i18n = options.__i18n || [];
+  options.__i18n.push({
+	\\"en\\": {
+		\\"hello\\": \\"hello!\\"
+	},
+	\\"ja\\": {
+		\\"hello\\": \\"こんにちは！\\"
+	}
+});
+}
 
-/* template */
-var __vue_render__ = function() {
-  var _vm = this;
-  var _h = _vm.$createElement;
-  var _c = _vm._self._c || _h;
-  return _c(\\"p\\", [_vm._v(_vm._s(_vm.$t(\\"hello\\")))])
-};
-var __vue_staticRenderFns__ = [];
-__vue_render__._withStripped = true;
+if (typeof i18n === 'function') i18n(script);
 
-  /* style */
-  const __vue_inject_styles__ = undefined;
-  /* scoped */
-  const __vue_scope_id__ = undefined;
-  /* module identifier */
-  const __vue_module_identifier__ = undefined;
-  /* functional template */
-  const __vue_is_functional_template__ = false;
-  /* style inject */
-  
-  /* style inject SSR */
-  
-  /* style inject shadow dom */
-  
+script.render = render;
+script.__file = \\"entry.vue\\";
 
-  
-  const __vue_component__ = normalizeComponent(
-    { render: __vue_render__, staticRenderFns: __vue_staticRenderFns__ },
-    __vue_inject_styles__,
-    __vue_script__,
-    __vue_scope_id__,
-    __vue_is_functional_template__,
-    __vue_module_identifier__,
-    false,
-    undefined,
-    undefined,
-    undefined
-  );
-i18n(__vue_component__);
-
-export default __vue_component__;
-export { en, ja };
+export default script;
 "
 `;
