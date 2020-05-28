@@ -34,7 +34,6 @@
     "@typescript-eslint/typescript-estree": "^3.0.0",
     "@vue/compiler-sfc": "^3.0.0-beta.14",
     "debug": "^4.1.1",
-<<<<<<< HEAD
     "eslint": "^7.1.0",
     "eslint-config-prettier": "^6.10.1",
     "eslint-plugin-prettier": "^3.1.2",
@@ -44,18 +43,11 @@
     "jest-puppeteer": "^4.4.0",
     "jest-watch-typeahead": "^0.6.0",
     "jsdom": "^16.0.0",
-=======
-    "eslint": "^7.0.0",
-    "eslint-plugin-vue-libs": "^4.0.0",
-    "jest": "^25.5.4",
-    "jest-watch-typeahead": "^0.6.0",
->>>>>>> next
     "lerna-changelog": "^1.0.0",
     "npm-run-all": "^4.1.5",
     "opener": "^1.5.1",
     "puppeteer": "^2.1.1",
     "rollup": "^2.7.0",
-<<<<<<< HEAD
     "rollup-plugin-vue": "git://github.com/vuejs/rollup-plugin-vue.git#0720102dd5d023a19bb720329cc84d91c5d88f7c",
     "shipjs": "^0.19.0",
     "ts-jest": "^26.0.0",
@@ -63,17 +55,6 @@
     "typescript-eslint-language-service": "^2.0.3",
     "vue": "^3.0.0-beta.14",
     "vue-i18n": "^9.0.0-alpha.9"
-=======
-    "rollup-plugin-vue": "^5.1.4",
-    "shipjs": "^0.19.0",
-    "ts-jest": "^26.0.0",
-    "typescript": "^3.8.3",
-    "typescript-eslint-language-service": "^2.1.8",
-    "vue-template-compiler": "^2.6.11"
-  },
-  "peerDependencies": {
-    "vue-template-compiler": "^2.6"
->>>>>>> next
   },
   "engines": {
     "node": ">= 10"
