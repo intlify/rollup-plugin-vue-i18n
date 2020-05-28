@@ -33,16 +33,22 @@
     "@typescript-eslint/parser": "^2.30.0",
     "@typescript-eslint/typescript-estree": "^2.30.0",
     "debug": "^4.1.1",
-    "eslint": "^6.8.0",
+    "eslint": "^7.0.0",
     "eslint-plugin-vue-libs": "^4.0.0",
     "jest": "^25.5.4",
-    "jest-watch-typeahead": "^0.5.0",
+    "jest-watch-typeahead": "^0.6.0",
     "lerna-changelog": "^1.0.0",
     "opener": "^1.5.1",
     "rollup": "^2.7.0",
+<<<<<<< HEAD
     "rollup-plugin-vue": "^6.0.0-alpha.7",
     "shipjs": "^0.18.0",
     "ts-jest": "^25.4.0",
+=======
+    "rollup-plugin-vue": "^5.1.4",
+    "shipjs": "^0.19.0",
+    "ts-jest": "^26.0.0",
+>>>>>>> ef6cf0375154ccf972171a7ca7e64c38b28cfa20
     "typescript": "^3.8.3",
     "typescript-eslint-language-service": "^2.1.8",
     "vue-template-compiler": "^2.6.11"
