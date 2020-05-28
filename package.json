@@ -74,6 +74,7 @@
     "url": "git+https://github.com/intlify/rollup-plugin-vue-i18n.git"
   },
   "scripts": {
+    "postinstall": "cd ./node_modules/rollup-plugin-vue && yarn && yarn build && cd ../../",
     "build": "tsc -p .",
     "build:example": "yarn build && rollup -c ./example/basic/rollup.config.js",
     "watch": "tsc -p . --watch",
