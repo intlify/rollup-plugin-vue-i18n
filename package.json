@@ -48,7 +48,7 @@
     "opener": "^1.5.1",
     "puppeteer": "^2.1.1",
     "rollup": "^2.7.0",
-    "rollup-plugin-vue": "git://github.com/vuejs/rollup-plugin-vue.git#0720102dd5d023a19bb720329cc84d91c5d88f7c",
+    "rollup-plugin-vue": "^6.0.0-beta.4",
     "shipjs": "^0.19.0",
     "ts-jest": "^26.0.0",
     "typescript": "^3.9.3",
@@ -74,7 +74,6 @@
     "url": "git+https://github.com/intlify/rollup-plugin-vue-i18n.git"
   },
   "scripts": {
-    "postinstall": "cd ./node_modules/rollup-plugin-vue && yarn && yarn build && cd ../../",
     "build": "tsc -p .",
     "build:example": "yarn build && rollup -c ./example/basic/rollup.config.js",
     "watch": "tsc -p . --watch",

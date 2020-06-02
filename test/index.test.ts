@@ -41,9 +41,12 @@ ${i18nLocaleMessages}
       VuePlugin({
         customBlocks: ['i18n']
       })
-    ]
+    ],
+    onwarn: () => {
+      return
+    }
   })
-    .then(bundle => bundle.generate({ format: 'es' }))
+    .then(bundle => bundle.generate({ format: 'esm' }))
     .then(generated => generated.output[0])
 }
 
