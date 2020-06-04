@@ -86,6 +86,7 @@
     "build:example:composable": "rollup -c ./examples/rollup.config.js --environment BUILD:composable",
     "watch": "tsc -p . --watch",
     "clean": "npm-run-all clean:*",
+    "clean:lib": "rm -rf ./lib/index.js",
     "clean:example": "npm-run-all clean:example:*",
     "clean:example:legacy": "rm -rf ./examples/legacy/index.js",
     "clean:example:composable": "rm -rf ./examples/composable/index.js",

@@ -1,6 +1,7 @@
 coverage
 node_modules
-example/components.esm.js
+examples/legacy/index.js
+examples/compsable/index.js
 .DS_Store
 lib
 *.log
