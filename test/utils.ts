@@ -3,7 +3,7 @@ import { rollup } from 'rollup'
 import alias from '@rollup/plugin-alias'
 import VuePlugin from 'rollup-plugin-vue'
 import I18nPlugin from '../src/index'
-import { JSDOM, VirtualConsole, DOMWindow } from 'jsdom'
+import { JSDOM, VirtualConsole } from 'jsdom'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function bundle(fixture: string, options = {}) {
@@ -24,14 +24,11 @@ export function bundle(fixture: string, options = {}) {
       return
     }
   })
-  .then(bundle => bundle.generate({ format: 'esm' }))
-  .then(generated => generated.output[0])
+    .then(bundle => bundle.generate({ format: 'esm' }))
+    .then(generated => generated.output[0])
 }
 
-export async function bundleAndRun(
-  fixture: string,
-  config = {}
-) {
+export async function bundleAndRun(fixture: string, config = {}) {
   const { code } = await bundle(fixture, config)
 
   let dom: JSDOM | null = null

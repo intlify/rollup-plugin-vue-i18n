@@ -2,7 +2,7 @@ module.exports = {
   server: {
     port: 8080,
     launchTimeout: 10000,
-    command: `echo 'hello!'`
+    command: 'serve ./examples -p 8080'
   },
   launch: {
     dumpio: false,

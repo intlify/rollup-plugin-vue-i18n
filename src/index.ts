@@ -3,7 +3,7 @@ import JSON5 from 'json5'
 import yaml from 'js-yaml'
 import { Plugin } from 'rollup'
 import { createFilter } from 'rollup-pluginutils'
-import {friendlyJSONstringify } from 'vue-i18n'
+import { friendlyJSONstringify } from 'vue-i18n'
 
 import { debug as Debug } from 'debug'
 const debug = Debug('rollup-plugin-vue-i18n')
@@ -21,6 +21,7 @@ type Query = {
   [key: string]: unknown
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export default function i18n(options: Record<string, unknown>): Plugin {
   const filter = createFilter([/vue&type=i18n/])
 
@@ -35,7 +36,10 @@ export default function i18n(options: Record<string, unknown>): Plugin {
             `export default function i18n(Component) {\n` +
             `  const options = typeof Component === 'function' ? Component.options : Component\n` +
             `  options.__i18n = options.__i18n || []\n` +
-            `  options.__i18n.push(${stringify(parse(source, query), query)})\n` +
+            `  options.__i18n.push(${stringify(
+              parse(source, query),
+              query
+            )})\n` +
             `}`,
           map: {
             mappings: ''
@@ -46,10 +50,13 @@ export default function i18n(options: Record<string, unknown>): Plugin {
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function stringify(data: any, query: Query): string {
   const { locale } = query
   if (locale) {
-    return friendlyJSONstringify(Object.assign({}, { [locale as string]: data }))
+    return friendlyJSONstringify(
+      Object.assign({}, { [locale as string]: data })
+    )
   } else {
     return friendlyJSONstringify(data)
   }
