@@ -1,101 +1,249 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
-exports[`json 1`] = `
-"import { openBlock, createBlock, toDisplayString } from 'vue';
-
-//
-//
-//
-//
-
-var script = {
-  name: 'Entry'
-};
-
-function render(_ctx, _cache) {
-  return (openBlock(), createBlock(\\"p\\", null, toDisplayString(_ctx.$t('hello')), 1 /* TEXT */))
-}
-
-function i18n(Component) {
+exports[`basic: code 1`] = `
+"function i18n(Component) {
   const options = typeof Component === 'function' ? Component.options : Component;
   options.__i18n = options.__i18n || [];
-  options.__i18n.push({\\"en\\":{\\"hello\\":\\"hello!\\"},\\"ja\\":{\\"hello\\":\\"こんにちは！\\"}});
+  options.__i18n.push({\\"en\\":{\\"hello\\":\\"hello world!\\"}});
 }
 
+const script = {};
+const render = () => {};
 if (typeof i18n === 'function') i18n(script);
 
 script.render = render;
-script.__file = \\"entry.vue\\";
+script.__file = \\"test/fixtures/basic.vue\\";
 
-export default script;
-"
-`;
-
-exports[`json5 1`] = `
-"import { openBlock, createBlock, toDisplayString } from 'vue';
-
-//
-//
-//
-//
-
-var script = {
-  name: 'Entry'
-};
-
-function render(_ctx, _cache) {
-  return (openBlock(), createBlock(\\"p\\", null, toDisplayString(_ctx.$t('hello')), 1 /* TEXT */))
-}
-
-function i18n(Component) {
-  const options = typeof Component === 'function' ? Component.options : Component;
-  options.__i18n = options.__i18n || [];
-  options.__i18n.push({\\"en\\":{\\"hello\\":\\"hello!\\"},\\"ja\\":{\\"hello\\":\\"こんにちは！\\"}});
-}
-
-if (typeof i18n === 'function') i18n(script);
-
-script.render = render;
-script.__file = \\"entry.vue\\";
-
-export default script;
-"
-`;
-
-exports[`yaml 1`] = `
-"import { openBlock, createBlock, toDisplayString } from 'vue';
-
-//
-//
-//
-//
-
-var script = {
-  name: 'Entry'
-};
-
-function render(_ctx, _cache) {
-  return (openBlock(), createBlock(\\"p\\", null, toDisplayString(_ctx.$t('hello')), 1 /* TEXT */))
-}
-
-function i18n(Component) {
-  const options = typeof Component === 'function' ? Component.options : Component;
-  options.__i18n = options.__i18n || [];
-  options.__i18n.push({
-	\\"en\\": {
-		\\"hello\\": \\"hello!\\"
-	},
-	\\"ja\\": {
-		\\"hello\\": \\"こんにちは！\\"
-	}
+var exports = /*#__PURE__*/Object.freeze({
+  __proto__: null,
+  'default': script
 });
+
+if (typeof window !== 'undefined') {
+  window.module = script;
+  window.exports = exports;
+}
+"
+`;
+
+exports[`import: code 1`] = `
+"function i18n(Component) {
+  const options = typeof Component === 'function' ? Component.options : Component;
+  options.__i18n = options.__i18n || [];
+  options.__i18n.push({\\"en\\":{\\"hello\\":\\"hello world!\\"}});
 }
 
+const script = {};
+const render = () => {};
 if (typeof i18n === 'function') i18n(script);
 
 script.render = render;
-script.__file = \\"entry.vue\\";
+script.__file = \\"test/fixtures/import.vue\\";
 
-export default script;
+var exports = /*#__PURE__*/Object.freeze({
+  __proto__: null,
+  'default': script
+});
+
+if (typeof window !== 'undefined') {
+  window.module = script;
+  window.exports = exports;
+}
+"
+`;
+
+exports[`json5: code 1`] = `
+"function i18n(Component) {
+  const options = typeof Component === 'function' ? Component.options : Component;
+  options.__i18n = options.__i18n || [];
+  options.__i18n.push({\\"en\\":{\\"hello\\":\\"hello world!\\"}});
+}
+
+const script = {};
+const render = () => {};
+if (typeof i18n === 'function') i18n(script);
+
+script.render = render;
+script.__file = \\"test/fixtures/json5.vue\\";
+
+var exports = /*#__PURE__*/Object.freeze({
+  __proto__: null,
+  'default': script
+});
+
+if (typeof window !== 'undefined') {
+  window.module = script;
+  window.exports = exports;
+}
+"
+`;
+
+exports[`locale attr and basic: code 1`] = `
+"function i18n(Component) {
+  const options = typeof Component === 'function' ? Component.options : Component;
+  options.__i18n = options.__i18n || [];
+  options.__i18n.push({\\"en\\":{\\"hello\\":\\"hello world!\\"}});
+}
+
+function i18n$1(Component) {
+  const options = typeof Component === 'function' ? Component.options : Component;
+  options.__i18n = options.__i18n || [];
+  options.__i18n.push({\\"ja\\":{\\"hello\\":\\"こんにちは、世界！\\"}});
+}
+
+const script = {};
+const render = () => {};
+if (typeof i18n === 'function') i18n(script);
+if (typeof i18n$1 === 'function') i18n$1(script);
+
+script.render = render;
+script.__file = \\"test/fixtures/locale-mix.vue\\";
+
+var exports = /*#__PURE__*/Object.freeze({
+  __proto__: null,
+  'default': script
+});
+
+if (typeof window !== 'undefined') {
+  window.module = script;
+  window.exports = exports;
+}
+"
+`;
+
+exports[`locale attr and import: code 1`] = `
+"function i18n(Component) {
+  const options = typeof Component === 'function' ? Component.options : Component;
+  options.__i18n = options.__i18n || [];
+  options.__i18n.push({\\"en\\":{\\"hello\\":\\"hello world!\\"}});
+}
+
+const script = {};
+const render = () => {};
+if (typeof i18n === 'function') i18n(script);
+
+script.render = render;
+script.__file = \\"test/fixtures/locale-import.vue\\";
+
+var exports = /*#__PURE__*/Object.freeze({
+  __proto__: null,
+  'default': script
+});
+
+if (typeof window !== 'undefined') {
+  window.module = script;
+  window.exports = exports;
+}
+"
+`;
+
+exports[`locale: code 1`] = `
+"function i18n(Component) {
+  const options = typeof Component === 'function' ? Component.options : Component;
+  options.__i18n = options.__i18n || [];
+  options.__i18n.push({\\"ja\\":{\\"hello\\":\\"こんにちは、世界！\\"}});
+}
+
+const script = {};
+const render = () => {};
+if (typeof i18n === 'function') i18n(script);
+
+script.render = render;
+script.__file = \\"test/fixtures/locale.vue\\";
+
+var exports = /*#__PURE__*/Object.freeze({
+  __proto__: null,
+  'default': script
+});
+
+if (typeof window !== 'undefined') {
+  window.module = script;
+  window.exports = exports;
+}
+"
+`;
+
+exports[`multiple: code 1`] = `
+"function i18n(Component) {
+  const options = typeof Component === 'function' ? Component.options : Component;
+  options.__i18n = options.__i18n || [];
+  options.__i18n.push({\\"en\\":{\\"hello\\":\\"hello world!\\"}});
+}
+
+function i18n$1(Component) {
+  const options = typeof Component === 'function' ? Component.options : Component;
+  options.__i18n = options.__i18n || [];
+  options.__i18n.push({\\"ja\\":{\\"hello\\":\\"こんにちは、世界！\\"}});
+}
+
+const script = {};
+const render = () => {};
+if (typeof i18n === 'function') i18n(script);
+if (typeof i18n$1 === 'function') i18n$1(script);
+
+script.render = render;
+script.__file = \\"test/fixtures/multiple.vue\\";
+
+var exports = /*#__PURE__*/Object.freeze({
+  __proto__: null,
+  'default': script
+});
+
+if (typeof window !== 'undefined') {
+  window.module = script;
+  window.exports = exports;
+}
+"
+`;
+
+exports[`special characters: code 1`] = `
+"function i18n(Component) {
+  const options = typeof Component === 'function' ? Component.options : Component;
+  options.__i18n = options.__i18n || [];
+  options.__i18n.push({\\"en\\":{\\"hello\\":\\"hello\\\\ngreat\\\\t\\\\\\"world\\\\\\"\\"}});
+}
+
+const script = {};
+const render = () => {};
+if (typeof i18n === 'function') i18n(script);
+
+script.render = render;
+script.__file = \\"test/fixtures/special-char.vue\\";
+
+var exports = /*#__PURE__*/Object.freeze({
+  __proto__: null,
+  'default': script
+});
+
+if (typeof window !== 'undefined') {
+  window.module = script;
+  window.exports = exports;
+}
+"
+`;
+
+exports[`yaml: code 1`] = `
+"function i18n(Component) {
+  const options = typeof Component === 'function' ? Component.options : Component;
+  options.__i18n = options.__i18n || [];
+  options.__i18n.push({\\"en\\":{\\"hello\\":\\"hello world!\\"}});
+}
+
+const script = {};
+const render = () => {};
+if (typeof i18n === 'function') i18n(script);
+
+script.render = render;
+script.__file = \\"test/fixtures/yaml.vue\\";
+
+var exports = /*#__PURE__*/Object.freeze({
+  __proto__: null,
+  'default': script
+});
+
+if (typeof window !== 'undefined') {
+  window.module = script;
+  window.exports = exports;
+}
 "
 `;

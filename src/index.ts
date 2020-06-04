@@ -3,25 +3,39 @@ import JSON5 from 'json5'
 import yaml from 'js-yaml'
 import { Plugin } from 'rollup'
 import { createFilter } from 'rollup-pluginutils'
+import {friendlyJSONstringify } from 'vue-i18n'
 
 import { debug as Debug } from 'debug'
 const debug = Debug('rollup-plugin-vue-i18n')
 
-export default function i18n(): Plugin {
+type Query = {
+  filename: string
+  vue: boolean
+  type?: 'script' | 'template' | 'style' | 'custom'
+  lang?: string
+  src?: boolean
+  id?: string
+  index?: number
+  scoped?: boolean
+  module?: string | boolean
+  [key: string]: unknown
+}
+
+export default function i18n(options: Record<string, unknown>): Plugin {
   const filter = createFilter([/vue&type=i18n/])
 
   return {
     name: 'rollup-plugin-vue-i18n',
     transform(source: string, id: string) {
-      const query = parseVuePartRequest(id)
       debug('transform id', id)
       if (filter(id)) {
+        const query = parseVuePartRequest(id)
         return {
           code:
             `export default function i18n(Component) {\n` +
             `  const options = typeof Component === 'function' ? Component.options : Component\n` +
             `  options.__i18n = options.__i18n || []\n` +
-            `  options.__i18n.push(${convert(source, (query as any).lang)})\n` + // eslint-disable-line @typescript-eslint/no-explicit-any
+            `  options.__i18n.push(${stringify(parse(source, query), query)})\n` +
             `}`,
           map: {
             mappings: ''
@@ -32,59 +46,28 @@ export default function i18n(): Plugin {
   }
 }
 
-function convert(source: string, lang: string): string {
-  const value = source.trim()
-  switch (lang) {
-    case 'yaml':
-    case 'yml':
-      const data = yaml.safeLoad(value)
-      return JSON.stringify(data, undefined, '\t')
-    case 'json5':
-      return JSON.stringify(JSON5.parse(value))
-    default:
-      return JSON.stringify(JSON.parse(value))
+function stringify(data: any, query: Query): string {
+  const { locale } = query
+  if (locale) {
+    return friendlyJSONstringify(Object.assign({}, { [locale as string]: data }))
+  } else {
+    return friendlyJSONstringify(data)
   }
 }
 
-type Query =
-  | {
-      filename: string
-      vue: false
-    }
-  | {
-      filename: string
-      vue: true
-      type: 'script'
-      lang?: string
-      src?: true
-    }
-  | {
-      filename: string
-      vue: true
-      type: 'template'
-      id?: string
-      lang?: string
-      src?: true
-    }
-  | {
-      filename: string
-      vue: true
-      type: 'style'
-      index: number
-      id?: string
-      scoped?: boolean
-      module?: string | boolean
-      lang?: string
-      src?: true
-    }
-  | {
-      filename: string
-      vue: true
-      type: 'custom'
-      index: number
-      lang?: string
-      src?: true
-    }
+function parse(source: string, query: Query): string {
+  const value = source.trim()
+  const { lang } = query
+  switch (lang) {
+    case 'yaml':
+    case 'yml':
+      return yaml.safeLoad(value)
+    case 'json5':
+      return JSON5.parse(value)
+    default:
+      return JSON.parse(value)
+  }
+}
 
 function parseVuePartRequest(id: string): Query {
   const [filename, query] = id.split('?', 2)
@@ -104,11 +87,13 @@ function parseVuePartRequest(id: string): Query {
       index: Number(raw.index),
       src: 'src' in raw,
       scoped: 'scoped' in raw
-    } as any // eslint-disable-line @typescript-eslint/no-explicit-any
+    } as Query
+
     if (langPart) {
       const [, lang] = langPart.split('.')
-      part['lang'] = lang
+      part.lang = lang
     }
+
     return part
   }
 

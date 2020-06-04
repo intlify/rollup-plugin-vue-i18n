@@ -1,95 +1,99 @@
-import { rollup } from 'rollup'
-import VuePlugin from 'rollup-plugin-vue'
-import I18nPlugin from '../src/index'
-import { pluginInline as InlinePlugin } from './utils'
+import { bundleAndRun } from './utils'
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function setupRollup(options: any = {}) {
-  const i18nLang = options.lang || 'json'
-  const i18nLocaleMessages =
-    options.localeMessages ||
-    `
-{
-  "en": {
-    "hello": "hello!"
-  },
-  "ja": {
-    "hello": "こんにちは！"
-  }
-}
-`
-  return rollup({
-    input: '/entry.vue',
-    plugins: [
-      InlinePlugin(
-        '/entry.vue',
-        `
-<template>
-  <p>{{ $t('hello') }}</p>
-</template>
-<script>
-export default {
-  name: 'Entry'
-}
-</script>
-<i18n lang="${i18nLang}">
-${i18nLocaleMessages}
-</i18n>
-`
-      ),
-      I18nPlugin(),
-      VuePlugin({
-        customBlocks: ['i18n']
-      })
-    ],
-    onwarn: () => {
-      return
+test('basic', async () => {
+  const { module, code } = await bundleAndRun('basic.vue')
+  expect(code).toMatchSnapshot('code')
+  expect(module.__i18n).toMatchObject([{
+    en: {
+      hello: 'hello world!'
     }
-  })
-    .then(bundle => bundle.generate({ format: 'esm' }))
-    .then(generated => generated.output[0])
-}
-
-const EXPECT_INJECT_STRING = `const options = typeof Component === 'function' ? Component.options : Component`
-
-test('json', async () => {
-  const { code } = await setupRollup()
-
-  expect(code).toMatchSnapshot()
-  expect(code).toEqual(expect.stringContaining(EXPECT_INJECT_STRING))
+  }])
 })
 
 test('yaml', async () => {
-  const { code } = await setupRollup({
-    lang: 'yaml',
-    localeMessages: `
-en:
-  hello: "hello!"
-ja:
-  hello: "こんにちは！"
-`
-  })
-
-  expect(code).toMatchSnapshot()
-  expect(code).toEqual(expect.stringContaining(EXPECT_INJECT_STRING))
+  const { module, code } = await bundleAndRun('yaml.vue')
+  expect(code).toMatchSnapshot('code')
+  expect(module.__i18n).toMatchObject([{
+    en: {
+      hello: 'hello world!'
+    }
+  }])
 })
 
 test('json5', async () => {
-  const { code } = await setupRollup({
-    lang: 'json5',
-    localeMessages: `
-{
-  en: {
-    hello: 'hello!'
-  },
-  ja: {
-    // comment
-    hello: "こんにちは！"
-  }
-}
-`
-  })
+  const { module, code } = await bundleAndRun('json5.vue')
+  expect(code).toMatchSnapshot('code')
+  expect(module.__i18n).toMatchObject([{
+    en: {
+      hello: 'hello world!'
+    }
+  }])
+})
 
-  expect(code).toMatchSnapshot()
-  expect(code).toEqual(expect.stringContaining(EXPECT_INJECT_STRING))
+test('import', async () => {
+  const { module, code } = await bundleAndRun('import.vue')
+  expect(code).toMatchSnapshot('code')
+  expect(module.__i18n).toMatchObject([{
+    en: {
+      hello: 'hello world!'
+    }
+  }])
+})
+
+test('multiple', async () => {
+  const { module, code } = await bundleAndRun('multiple.vue')
+  expect(code).toMatchSnapshot('code')
+  expect(module.__i18n).toMatchObject([{
+    en: {
+      hello: 'hello world!'
+    }
+  }, {
+    ja: {
+      hello: 'こんにちは、世界！'
+    }
+  }])
+})
+
+test('locale', async () => {
+  const { module, code } = await bundleAndRun('locale.vue')
+  expect(code).toMatchSnapshot('code')
+  expect(module.__i18n).toMatchObject([{
+    ja: {
+      hello: 'こんにちは、世界！'
+    }
+  }])
+})
+
+test('locale attr and basic', async () => {
+  const { module, code } = await bundleAndRun('locale-mix.vue')
+  expect(code).toMatchSnapshot('code')
+  expect(module.__i18n).toMatchObject([{
+    en: {
+      hello: 'hello world!'
+    }
+  }, {
+    ja: {
+      hello: 'こんにちは、世界！'
+    }
+  }])
+})
+
+test('locale attr and import', async () => {
+  const { module, code } = await bundleAndRun('locale-import.vue')
+  expect(code).toMatchSnapshot('code')
+  expect(module.__i18n).toMatchObject([{
+    en: {
+      hello: 'hello world!'
+    }
+  }])
+})
+
+test('special characters', async () => {
+  const { module, code } = await bundleAndRun('special-char.vue')
+  expect(code).toMatchSnapshot('code')
+  expect(module.__i18n).toMatchObject([{
+    en: {
+      hello: 'hello\ngreat\t\"world\"'
+    }
+  }])
 })
