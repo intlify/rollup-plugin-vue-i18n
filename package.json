@@ -102,7 +102,7 @@
     "release:trigger": "shipjs trigger",
     "test": "yarn lint && yarn test:cover && yarn test:e2e",
     "test:cover": "yarn test:unit --coverage",
-    "test:e2e": "yarn build && jest --runInBand --config ./jest.e2e.config.js",
+    "test:e2e": "yarn build:example && jest --runInBand --config ./jest.e2e.config.js",
     "test:unit": "jest --env node",
     "test:watch": "jest --env node --watch"
   },
