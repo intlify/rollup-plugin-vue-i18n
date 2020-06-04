@@ -5,88 +5,106 @@
 
 vue-i18n rollup plugin for custom blocks
 
+**NOTE:** :warning: This `next` branch is development branch for Vue 3! The stable version is now in [`master`](https://github.com/intlify/rollup-plugin-vue-i18n/tree/master) branch!
+
+## Status: Alpha ![Test](https://github.com/intlify/rollup-plugin-vue-i18n/workflows/Test/badge.svg)
+
 
 ## :exclamation: Requirement
 
 You need to install the follwoing:
 
-- rollup-plugin-vue@5.1.4 later
+- rollup-plugin-vue@6.0.0-beta.4
 
 If you use rollup-plugin-vue, We recommend you should read the [docs](https://rollup-plugin-vue.vuejs.org/)
 
 
 ## :cd: Installation
 
-npm:
-```bash
-$ npm i --save-dev @rollup/plugin-json
-$ npm i --save-dev @rollup/plugin-yaml # if you use locale messages with YAML format
-$ npm i --save-dev @intlify/rollup-plugin-vue-i18n
+### NPM
+
+```sh
+$ npm i --save-dev @intlify/rollup-plugin-vue-i18n@next
 ```
 
-yarn:
-```bash
-$ yarn add -D @rollup/plugin-json
-$ yarn add -D @rollup/plugin-yaml # if you use locale messages with YAML format
-$ yarn add -D @intlify/rollup-plugin-vue-i18n
+### YARN
+
+```sh
+$ yarn add -D @intlify/rollup-plugin-vue-i18n@next
 ```
 
 ## :rocket: Usages
 
-the below example that `example/Hello.vue` have `i18n` custom block:
+the below example that `examples/composable/App.vue` have `i18n` custom block:
 
 ```vue
 <template>
-  <p>{{ $t('hello') }}</p>
+  <form>
+    <label>{{ t('language') }}</label>
+    <select v-model="locale">
+      <option value="en">en</option>
+      <option value="ja">ja</option>
+    </select>
+  </form>
+  <p>{{ t('hello') }}</p>
 </template>
 
 <script>
+import { useI18n } from 'vue-i18n'
 export default {
-  name: 'Hello'
+  name: 'App',
+  setup() {
+    return { ...useI18n({
+      inheritLocale: true
+    }) }
+  }
 }
 </script>
 
 <i18n>
 {
   "en": {
-    "hello": "Hello World!"
+    "language": "Language",
+    "hello": "hello, world!"
   },
   "ja": {
+    "language": "言語",
     "hello": "こんにちは、世界！"
   }
 }
 </i18n>
+
 ```
 
 If you would like to bundle as common library with rollup, you can configure the following for ES Module:
 
 ```js
-const vue = require('rollup-plugin-vue')
-const yaml = require('@rollup/plugin-yaml')
-const json = require('@rollup/plugin-json')
-const { default: i18n } = require('../lib/index')
+import vue from 'rollup-plugin-vue'
+import replace from '@rollup/plugin-replace'
+import resolve from '@rollup/plugin-node-resolve'
+import commonjs from '@rollup/plugin-commonjs'
+import i18n from '@intlify/rollup-plugin-vue-i18n'
+import path from 'path'
 
-export default {
-  input: './example/index.js',
-  output: {
-    format: 'esm',
-    file: './example/components.esm.js'
-  },
-  external: [
-    // Externalize so that the output code is readable.
-    'vue',
-    'vue-runtime-helpers',
-    'vue-i18n'
-  ],
-  plugins: [
-    yaml(),
-    json(),
-    i18n(),
-    vue({
-      customBlocks: ['i18n']
-    })
-  ]
-}
+export default [
+  {
+    input: path.resolve(__dirname, `./examples/composable/main.js`),
+    output: {
+      file: path.resolve(__dirname, `./examples/composable/index.js`),
+      format: 'cjs'
+    },
+    plugins: [
+      commonjs(),
+      resolve(),
+      replace({
+        'process.env.NODE_ENV': JSON.stringify('production')
+      }),
+      i18n(),
+      VuePlugin({ customBlocks: ['i18n'] })
+    ]
+  }
+]
+
 ```
 
 ### Locale Messages formatting
@@ -95,6 +113,7 @@ You can be used by specifying the following format in the `lang` attribute:
 
 - json (default)
 - yaml
+- json5
 
 example `yaml` foramt:
 
@@ -106,13 +125,6 @@ ja:
   hello: "こんにちは、世界！"
 </i18n>
 ```
-
-
-## :warning: Limitations
-Currently, There are the following limitations:
-
-- Not support `json5` format
-- Not support `locale` attributes
 
 
 ## :scroll: Changelog
