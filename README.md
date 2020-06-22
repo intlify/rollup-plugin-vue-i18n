@@ -100,7 +100,7 @@ export default [
         'process.env.NODE_ENV': JSON.stringify('production')
       }),
       i18n(),
-      VuePlugin({ customBlocks: ['i18n'] })
+      vue({ customBlocks: ['i18n'] })
     ]
   }
 ]
