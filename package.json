@@ -58,7 +58,7 @@
     "shipjs": "^0.21.0",
     "ts-jest": "^26.0.0",
     "typescript": "^3.9.5",
-    "typescript-eslint-language-service": "^3.0.0",
+    "typescript-eslint-language-service": "^4.0.0",
     "vue": "^3.0.0-beta.15",
     "vue-i18n": "^9.0.0-alpha.11"
   },
