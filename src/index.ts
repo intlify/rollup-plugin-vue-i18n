@@ -68,7 +68,8 @@ function parse(source: string, query: Query): string {
   switch (lang) {
     case 'yaml':
     case 'yml':
-      return yaml.safeLoad(value)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return yaml.safeLoad(value) as any
     case 'json5':
       return JSON5.parse(value)
     default:
