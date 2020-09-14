@@ -1,4 +1,14 @@
 
+## v2.0.0-beta.1 (2020-09-14)
+
+#### :zap: Improvement Features
+* [#44](https://github.com/intlify/rollup-plugin-vue-i18n/pull/44) update deps ([@kazupon](https://github.com/kazupon))
+
+#### Committers: 2
+- Anton Kudryavtsev ([@Anidetrix](https://github.com/Anidetrix))
+- kazuya kawaguchi ([@kazupon](https://github.com/kazupon))
+
+
 ## v2.0.0-alpha.1 (2020-06-04)
 
 #### :star: Features
