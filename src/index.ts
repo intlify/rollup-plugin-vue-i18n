@@ -31,12 +31,13 @@ export default function i18n(options: Record<string, unknown>): Plugin {
       debug('transform id', id)
       if (filter(id)) {
         const query = parseVuePartRequest(id)
+        const variableName = query.global ? '__i18nGlobal' : '__i18n'
         return {
           code:
             `export default function i18n(Component) {\n` +
             `  const options = typeof Component === 'function' ? Component.options : Component\n` +
-            `  options.__i18n = options.__i18n || []\n` +
-            `  options.__i18n.push(${stringify(
+            `  options.${variableName} = options.${variableName} || []\n` +
+            `  options.${variableName}.push(${stringify(
               parse(source, query),
               query
             )})\n` +

@@ -26,6 +26,39 @@ if (typeof window !== 'undefined') {
 "
 `;
 
+exports[`global: code 1`] = `
+"function i18n(Component) {
+  const options = typeof Component === 'function' ? Component.options : Component;
+  options.__i18nGlobal = options.__i18nGlobal || [];
+  options.__i18nGlobal.push({\\"en\\":{\\"hello\\":\\"hello global!\\"}});
+}
+
+function i18n$1(Component) {
+  const options = typeof Component === 'function' ? Component.options : Component;
+  options.__i18n = options.__i18n || [];
+  options.__i18n.push({\\"ja\\":{\\"hello\\":\\"hello local!\\"}});
+}
+
+const script = {};
+const render = () => {};
+if (typeof i18n === 'function') i18n(script);
+if (typeof i18n$1 === 'function') i18n$1(script);
+
+script.render = render;
+script.__file = \\"test/fixtures/global-mix.vue\\";
+
+var exports = /*#__PURE__*/Object.freeze({
+  __proto__: null,
+  'default': script
+});
+
+if (typeof window !== 'undefined') {
+  window.module = script;
+  window.exports = exports;
+}
+"
+`;
+
 exports[`import: code 1`] = `
 "function i18n(Component) {
   const options = typeof Component === 'function' ? Component.options : Component;

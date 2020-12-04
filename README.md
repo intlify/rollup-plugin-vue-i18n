@@ -51,12 +51,15 @@ the below example that `examples/composable/App.vue` have `i18n` custom block:
 
 <script>
 import { useI18n } from 'vue-i18n'
+
 export default {
   name: 'App',
   setup() {
-    return { ...useI18n({
+    const { t, locale } = useI18n({
       inheritLocale: true
-    }) }
+    })
+
+    return { t, locale }
   }
 }
 </script>

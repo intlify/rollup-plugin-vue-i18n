@@ -147,7 +147,7 @@ const toDisplayString = (val) => {
             : String(val);
 };
 const replacer = (_key, val) => {
-    if (val instanceof Map) {
+    if (isMap(val)) {
         return {
             [`Map(${val.size})`]: [...val.entries()].reduce((entries, [key, val]) => {
                 entries[`${key} =>`] = val;
@@ -155,7 +155,7 @@ const replacer = (_key, val) => {
             }, {})
         };
     }
-    else if (val instanceof Set) {
+    else if (isSet(val)) {
         return {
             [`Set(${val.size})`]: [...val.values()]
         };
@@ -166,7 +166,7 @@ const replacer = (_key, val) => {
     return val;
 };
 const EMPTY_OBJ =  {};
-const EMPTY_ARR = [];
+const EMPTY_ARR =  [];
 const NOOP = () => { };
 /**
  * Always return false.
@@ -185,6 +185,8 @@ const remove = (arr, el) => {
 const hasOwnProperty = Object.prototype.hasOwnProperty;
 const hasOwn = (val, key) => hasOwnProperty.call(val, key);
 const isArray = Array.isArray;
+const isMap = (val) => toTypeString(val) === '[object Map]';
+const isSet = (val) => toTypeString(val) === '[object Set]';
 const isDate = (val) => val instanceof Date;
 const isFunction = (val) => typeof val === 'function';
 const isString = (val) => typeof val === 'string';
@@ -196,11 +198,17 @@ const isPromise = (val) => {
 const objectToString = Object.prototype.toString;
 const toTypeString = (value) => objectToString.call(value);
 const toRawType = (value) => {
+    // extract "RawType" from strings like "[object RawType]"
     return toTypeString(value).slice(8, -1);
 };
 const isPlainObject = (val) => toTypeString(val) === '[object Object]';
-const isIntegerKey = (key) => isString(key) && key[0] !== '-' && '' + parseInt(key, 10) === key;
-const isReservedProp = /*#__PURE__*/ makeMap('key,ref,' +
+const isIntegerKey = (key) => isString(key) &&
+    key !== 'NaN' &&
+    key[0] !== '-' &&
+    '' + parseInt(key, 10) === key;
+const isReservedProp = /*#__PURE__*/ makeMap(
+// the leading comma is intentional so empty string "" is also included
+',key,ref,' +
     'onVnodeBeforeMount,onVnodeMounted,' +
     'onVnodeBeforeUpdate,onVnodeUpdated,' +
     'onVnodeBeforeUnmount,onVnodeUnmounted');
@@ -222,15 +230,15 @@ const hyphenateRE = /\B([A-Z])/g;
 /**
  * @private
  */
-const hyphenate = cacheStringFunction((str) => {
-    return str.replace(hyphenateRE, '-$1').toLowerCase();
-});
+const hyphenate = cacheStringFunction((str) => str.replace(hyphenateRE, '-$1').toLowerCase());
 /**
  * @private
  */
-const capitalize = cacheStringFunction((str) => {
-    return str.charAt(0).toUpperCase() + str.slice(1);
-});
+const capitalize = cacheStringFunction((str) => str.charAt(0).toUpperCase() + str.slice(1));
+/**
+ * @private
+ */
+const toHandlerKey = cacheStringFunction((str) => (str ? `on${capitalize(str)}` : ``));
 // compare whether a value has changed, accounting for NaN.
 const hasChanged = (value, oldValue) => value !== oldValue && (value === value || oldValue === oldValue);
 const invokeArrayFns = (fns, arg) => {
@@ -244,6 +252,10 @@ const def = (obj, key, value) => {
         enumerable: false,
         value
     });
+};
+const toNumber = (val) => {
+    const n = parseFloat(val);
+    return isNaN(n) ? val : n;
 };
 let _globalThis;
 const getGlobalThis = () => {
@@ -309,6 +321,7 @@ function createReactiveEffect(fn, options) {
         }
     };
     effect.id = uid++;
+    effect.allowRecurse = !!options.allowRecurse;
     effect._isEffect = true;
     effect.active = true;
     effect.raw = fn;
@@ -366,7 +379,7 @@ function trigger(target, type, key, newValue, oldValue, oldTarget) {
     const add = (effectsToAdd) => {
         if (effectsToAdd) {
             effectsToAdd.forEach(effect => {
-                if (effect !== activeEffect) {
+                if (effect !== activeEffect || effect.allowRecurse) {
                     effects.add(effect);
                 }
             });
@@ -390,15 +403,32 @@ function trigger(target, type, key, newValue, oldValue, oldTarget) {
             add(depsMap.get(key));
         }
         // also run for iteration key on ADD | DELETE | Map.SET
-        const shouldTriggerIteration = (type === "add" /* ADD */ &&
-            (!isArray(target) || isIntegerKey(key))) ||
-            (type === "delete" /* DELETE */ && !isArray(target));
-        if (shouldTriggerIteration ||
-            (type === "set" /* SET */ && target instanceof Map)) {
-            add(depsMap.get(isArray(target) ? 'length' : ITERATE_KEY));
-        }
-        if (shouldTriggerIteration && target instanceof Map) {
-            add(depsMap.get(MAP_KEY_ITERATE_KEY));
+        switch (type) {
+            case "add" /* ADD */:
+                if (!isArray(target)) {
+                    add(depsMap.get(ITERATE_KEY));
+                    if (isMap(target)) {
+                        add(depsMap.get(MAP_KEY_ITERATE_KEY));
+                    }
+                }
+                else if (isIntegerKey(key)) {
+                    // new index added to array -> length changes
+                    add(depsMap.get('length'));
+                }
+                break;
+            case "delete" /* DELETE */:
+                if (!isArray(target)) {
+                    add(depsMap.get(ITERATE_KEY));
+                    if (isMap(target)) {
+                        add(depsMap.get(MAP_KEY_ITERATE_KEY));
+                    }
+                }
+                break;
+            case "set" /* SET */:
+                if (isMap(target)) {
+                    add(depsMap.get(ITERATE_KEY));
+                }
+                break;
         }
     }
     const run = (effect) => {
@@ -421,20 +451,30 @@ const readonlyGet = /*#__PURE__*/ createGetter(true);
 const shallowReadonlyGet = /*#__PURE__*/ createGetter(true, true);
 const arrayInstrumentations = {};
 ['includes', 'indexOf', 'lastIndexOf'].forEach(key => {
+    const method = Array.prototype[key];
     arrayInstrumentations[key] = function (...args) {
         const arr = toRaw(this);
         for (let i = 0, l = this.length; i < l; i++) {
             track(arr, "get" /* GET */, i + '');
         }
         // we run the method using the original args first (which may be reactive)
-        const res = arr[key](...args);
+        const res = method.apply(arr, args);
         if (res === -1 || res === false) {
             // if that didn't work, run it again using raw values.
-            return arr[key](...args.map(toRaw));
+            return method.apply(arr, args.map(toRaw));
         }
         else {
             return res;
         }
+    };
+});
+['push', 'pop', 'shift', 'unshift', 'splice'].forEach(key => {
+    const method = Array.prototype[key];
+    arrayInstrumentations[key] = function (...args) {
+        pauseTracking();
+        const res = method.apply(this, args);
+        resetTracking();
+        return res;
     };
 });
 function createGetter(isReadonly = false, shallow = false) {
@@ -450,12 +490,11 @@ function createGetter(isReadonly = false, shallow = false) {
             return target;
         }
         const targetIsArray = isArray(target);
-        if (targetIsArray && hasOwn(arrayInstrumentations, key)) {
+        if (!isReadonly && targetIsArray && hasOwn(arrayInstrumentations, key)) {
             return Reflect.get(arrayInstrumentations, key, receiver);
         }
         const res = Reflect.get(target, key, receiver);
-        const keyIsSymbol = isSymbol(key);
-        if (keyIsSymbol
+        if (isSymbol(key)
             ? builtInSymbols.has(key)
             : key === `__proto__` || key === `__v_isRef`) {
             return res;
@@ -525,7 +564,7 @@ function has(target, key) {
     return result;
 }
 function ownKeys(target) {
-    track(target, "iterate" /* ITERATE */, ITERATE_KEY);
+    track(target, "iterate" /* ITERATE */, isArray(target) ? 'length' : ITERATE_KEY);
     return Reflect.ownKeys(target);
 }
 const mutableHandlers = {
@@ -600,34 +639,34 @@ function add(value) {
     const target = toRaw(this);
     const proto = getProto(target);
     const hadKey = proto.has.call(target, value);
-    const result = proto.add.call(target, value);
+    target.add(value);
     if (!hadKey) {
         trigger(target, "add" /* ADD */, value, value);
     }
-    return result;
+    return this;
 }
 function set$1(key, value) {
     value = toRaw(value);
     const target = toRaw(this);
-    const { has, get, set } = getProto(target);
+    const { has, get } = getProto(target);
     let hadKey = has.call(target, key);
     if (!hadKey) {
         key = toRaw(key);
         hadKey = has.call(target, key);
     }
     const oldValue = get.call(target, key);
-    const result = set.call(target, key, value);
+    target.set(key, value);
     if (!hadKey) {
         trigger(target, "add" /* ADD */, key, value);
     }
     else if (hasChanged(value, oldValue)) {
         trigger(target, "set" /* SET */, key, value);
     }
-    return result;
+    return this;
 }
 function deleteEntry(key) {
     const target = toRaw(this);
-    const { has, get, delete: del } = getProto(target);
+    const { has, get } = getProto(target);
     let hadKey = has.call(target, key);
     if (!hadKey) {
         key = toRaw(key);
@@ -635,7 +674,7 @@ function deleteEntry(key) {
     }
     const oldValue = get ? get.call(target, key) : undefined;
     // forward the operation before queueing reactions
-    const result = del.call(target, key);
+    const result = target.delete(key);
     if (hadKey) {
         trigger(target, "delete" /* DELETE */, key, undefined);
     }
@@ -645,7 +684,7 @@ function clear() {
     const target = toRaw(this);
     const hadItems = target.size !== 0;
     // forward the operation before queueing reactions
-    const result = getProto(target).clear.call(target);
+    const result = target.clear();
     if (hadItems) {
         trigger(target, "clear" /* CLEAR */, undefined, undefined);
     }
@@ -670,9 +709,9 @@ function createIterableMethod(method, isReadonly, isShallow) {
     return function (...args) {
         const target = this["__v_raw" /* RAW */];
         const rawTarget = toRaw(target);
-        const isMap = rawTarget instanceof Map;
-        const isPair = method === 'entries' || (method === Symbol.iterator && isMap);
-        const isKeyOnly = method === 'keys' && isMap;
+        const targetIsMap = isMap(rawTarget);
+        const isPair = method === 'entries' || (method === Symbol.iterator && targetIsMap);
+        const isKeyOnly = method === 'keys' && targetIsMap;
         const innerIterator = target[method](...args);
         const wrap = isReadonly ? toReadonly : isShallow ? toShallow : toReactive;
         !isReadonly &&
@@ -811,12 +850,18 @@ function reactive(target) {
     }
     return createReactiveObject(target, false, mutableHandlers, mutableCollectionHandlers);
 }
-// Return a reactive-copy of the original object, where only the root level
-// properties are reactive, and does NOT unwrap refs nor recursively convert
-// returned properties.
+/**
+ * Return a shallowly-reactive copy of the original object, where only the root
+ * level properties are reactive. It also does not auto-unwrap refs (even at the
+ * root level).
+ */
 function shallowReactive(target) {
     return createReactiveObject(target, false, shallowReactiveHandlers, shallowCollectionHandlers);
 }
+/**
+ * Creates a readonly copy of the original object. Note the returned copy is not
+ * made reactive, but `readonly` can be called on an already reactive object.
+ */
 function readonly(target) {
     return createReactiveObject(target, true, readonlyHandlers, readonlyCollectionHandlers);
 }
@@ -913,6 +958,24 @@ function proxyRefs(objectWithRefs) {
     return isReactive(objectWithRefs)
         ? objectWithRefs
         : new Proxy(objectWithRefs, shallowUnwrapHandlers);
+}
+class ObjectRefImpl {
+    constructor(_object, _key) {
+        this._object = _object;
+        this._key = _key;
+        this.__v_isRef = true;
+    }
+    get value() {
+        return this._object[this._key];
+    }
+    set value(newVal) {
+        this._object[this._key] = newVal;
+    }
+}
+function toRef(object, key) {
+    return isRef(object[key])
+        ? object[key]
+        : new ObjectRefImpl(object, key);
 }
 
 class ComputedRefImpl {
@@ -1090,7 +1153,7 @@ function callWithAsyncErrorHandling(fn, instance, type, args) {
     }
     return values;
 }
-function handleError(err, instance, type) {
+function handleError(err, instance, type, throwInDev = true) {
     const contextVNode = instance ? instance.vnode : null;
     if (instance) {
         let cur = instance.parent;
@@ -1102,7 +1165,7 @@ function handleError(err, instance, type) {
             const errorCapturedHooks = cur.ec;
             if (errorCapturedHooks) {
                 for (let i = 0; i < errorCapturedHooks.length; i++) {
-                    if (errorCapturedHooks[i](err, exposedInstance, errorInfo)) {
+                    if (errorCapturedHooks[i](err, exposedInstance, errorInfo) === false) {
                         return;
                     }
                 }
@@ -1116,9 +1179,9 @@ function handleError(err, instance, type) {
             return;
         }
     }
-    logError(err);
+    logError(err, type, contextVNode, throwInDev);
 }
-function logError(err, type, contextVNode) {
+function logError(err, type, contextVNode, throwInDev = true) {
     {
         // recover in prod to reduce the impact on end-user
         console.error(err);
@@ -1141,7 +1204,7 @@ let currentPreFlushParentJob = null;
 const RECURSION_LIMIT = 100;
 function nextTick(fn) {
     const p = currentFlushPromise || resolvedPromise;
-    return fn ? p.then(fn) : p;
+    return fn ? p.then(this ? fn.bind(this) : fn) : p;
 }
 function queueJob(job) {
     // the dedupe search uses the startIndex argument of Array.includes()
@@ -1166,7 +1229,7 @@ function queueFlush() {
 function invalidateJob(job) {
     const i = queue.indexOf(job);
     if (i > -1) {
-        queue[i] = null;
+        queue.splice(i, 1);
     }
 }
 function queueCb(cb, activeQueue, pendingQueue, index) {
@@ -1235,8 +1298,6 @@ function flushJobs(seen) {
     //    priority number)
     // 2. If a component is unmounted during a parent component's update,
     //    its update can be skipped.
-    // Jobs can never be null before flush starts, since they are only invalidated
-    // during execution of another flushed job.
     queue.sort((a, b) => getId(a) - getId(b));
     try {
         for (flushIndex = 0; flushIndex < queue.length; flushIndex++) {
@@ -1279,15 +1340,106 @@ function checkRecursiveUpdates(seen, fn) {
     }
 }
 
-// mark the current rendering instance for asset resolution (e.g.
-// resolveComponent, resolveDirective) during render
+function emit(instance, event, ...rawArgs) {
+    const props = instance.vnode.props || EMPTY_OBJ;
+    let args = rawArgs;
+    const isModelListener = event.startsWith('update:');
+    // for v-model update:xxx events, apply modifiers on args
+    const modelArg = isModelListener && event.slice(7);
+    if (modelArg && modelArg in props) {
+        const modifiersKey = `${modelArg === 'modelValue' ? 'model' : modelArg}Modifiers`;
+        const { number, trim } = props[modifiersKey] || EMPTY_OBJ;
+        if (trim) {
+            args = rawArgs.map(a => a.trim());
+        }
+        else if (number) {
+            args = rawArgs.map(toNumber);
+        }
+    }
+    if ( __VUE_PROD_DEVTOOLS__) ;
+    // convert handler name to camelCase. See issue #2249
+    let handlerName = toHandlerKey(camelize(event));
+    let handler = props[handlerName];
+    // for v-model update:xxx events, also trigger kebab-case equivalent
+    // for props passed via kebab-case
+    if (!handler && isModelListener) {
+        handlerName = toHandlerKey(hyphenate(event));
+        handler = props[handlerName];
+    }
+    if (handler) {
+        callWithAsyncErrorHandling(handler, instance, 6 /* COMPONENT_EVENT_HANDLER */, args);
+    }
+    const onceHandler = props[handlerName + `Once`];
+    if (onceHandler) {
+        if (!instance.emitted) {
+            (instance.emitted = {})[handlerName] = true;
+        }
+        else if (instance.emitted[handlerName]) {
+            return;
+        }
+        callWithAsyncErrorHandling(onceHandler, instance, 6 /* COMPONENT_EVENT_HANDLER */, args);
+    }
+}
+function normalizeEmitsOptions(comp, appContext, asMixin = false) {
+    if (!appContext.deopt && comp.__emits !== undefined) {
+        return comp.__emits;
+    }
+    const raw = comp.emits;
+    let normalized = {};
+    // apply mixin/extends props
+    let hasExtends = false;
+    if (__VUE_OPTIONS_API__ && !isFunction(comp)) {
+        const extendEmits = (raw) => {
+            hasExtends = true;
+            extend(normalized, normalizeEmitsOptions(raw, appContext, true));
+        };
+        if (!asMixin && appContext.mixins.length) {
+            appContext.mixins.forEach(extendEmits);
+        }
+        if (comp.extends) {
+            extendEmits(comp.extends);
+        }
+        if (comp.mixins) {
+            comp.mixins.forEach(extendEmits);
+        }
+    }
+    if (!raw && !hasExtends) {
+        return (comp.__emits = null);
+    }
+    if (isArray(raw)) {
+        raw.forEach(key => (normalized[key] = null));
+    }
+    else {
+        extend(normalized, raw);
+    }
+    return (comp.__emits = normalized);
+}
+// Check if an incoming prop key is a declared emit event listener.
+// e.g. With `emits: { click: null }`, props named `onClick` and `onclick` are
+// both considered matched listeners.
+function isEmitListener(options, key) {
+    if (!options || !isOn(key)) {
+        return false;
+    }
+    key = key.slice(2).replace(/Once$/, '');
+    return (hasOwn(options, key[0].toLowerCase() + key.slice(1)) ||
+        hasOwn(options, hyphenate(key)) ||
+        hasOwn(options, key));
+}
+
+/**
+ * mark the current rendering instance for asset resolution (e.g.
+ * resolveComponent, resolveDirective) during render
+ */
 let currentRenderingInstance = null;
 function setCurrentRenderingInstance(instance) {
     currentRenderingInstance = instance;
 }
-// dev only flag to track whether $attrs was used during render.
-// If $attrs was used during render then the warning for failed attrs
-// fallthrough can be suppressed.
+/**
+ * dev only flag to track whether $attrs was used during render.
+ * If $attrs was used during render then the warning for failed attrs
+ * fallthrough can be suppressed.
+ */
 let accessedAttrs = false;
 function markAttrsAccessed() {
     accessedAttrs = true;
@@ -1331,7 +1483,7 @@ function renderComponentRoot(instance) {
         // to have comments along side the root element which makes it a fragment
         let root = result;
         let setRoot = undefined;
-        if (("production" !== 'production')) ;
+        if (("production" !== 'production') && result.patchFlag & 2048 /* DEV_ROOT_FRAGMENT */) ;
         if (Component.inheritAttrs !== false && fallthroughAttrs) {
             const keys = Object.keys(fallthroughAttrs);
             const { shapeFlag } = root;
@@ -1353,7 +1505,7 @@ function renderComponentRoot(instance) {
         // inherit directives
         if (vnode.dirs) {
             if (("production" !== 'production') && !isElementRoot(root)) ;
-            root.dirs = vnode.dirs;
+            root.dirs = root.dirs ? root.dirs.concat(vnode.dirs) : vnode.dirs;
         }
         // inherit transition data
         if (vnode.transition) {
@@ -1374,35 +1526,54 @@ function renderComponentRoot(instance) {
 }
 /**
  * dev only
+ * In dev mode, template root level comments are rendered, which turns the
+ * template into a fragment root, but we need to locate the single element
+ * root for attrs and scope id processing.
  */
 const getChildRoot = (vnode) => {
-    if (vnode.type !== Fragment) {
-        return [vnode, undefined];
-    }
     const rawChildren = vnode.children;
     const dynamicChildren = vnode.dynamicChildren;
-    const children = rawChildren.filter(child => {
-        return !(isVNode(child) &&
-            child.type === Comment &&
-            child.children !== 'v-if');
-    });
-    if (children.length !== 1) {
+    const childRoot = filterSingleRoot(rawChildren);
+    if (!childRoot) {
         return [vnode, undefined];
     }
-    const childRoot = children[0];
     const index = rawChildren.indexOf(childRoot);
     const dynamicIndex = dynamicChildren ? dynamicChildren.indexOf(childRoot) : -1;
     const setRoot = (updatedRoot) => {
         rawChildren[index] = updatedRoot;
-        if (dynamicIndex > -1) {
-            dynamicChildren[dynamicIndex] = updatedRoot;
-        }
-        else if (dynamicChildren && updatedRoot.patchFlag > 0) {
-            dynamicChildren.push(updatedRoot);
+        if (dynamicChildren) {
+            if (dynamicIndex > -1) {
+                dynamicChildren[dynamicIndex] = updatedRoot;
+            }
+            else if (updatedRoot.patchFlag > 0) {
+                vnode.dynamicChildren = [...dynamicChildren, updatedRoot];
+            }
         }
     };
     return [normalizeVNode(childRoot), setRoot];
 };
+function filterSingleRoot(children) {
+    let singleRoot;
+    for (let i = 0; i < children.length; i++) {
+        const child = children[i];
+        if (isVNode(child)) {
+            // ignore user comment
+            if (child.type !== Comment || child.children === 'v-if') {
+                if (singleRoot) {
+                    // has more than 1 non-comment child, return now
+                    return;
+                }
+                else {
+                    singleRoot = child;
+                }
+            }
+        }
+        else {
+            return;
+        }
+    }
+    return singleRoot;
+}
 const getFunctionalFallthrough = (attrs) => {
     let res;
     for (const key in attrs) {
@@ -1428,13 +1599,14 @@ const isElementRoot = (vnode) => {
     );
 };
 function shouldUpdateComponent(prevVNode, nextVNode, optimized) {
-    const { props: prevProps, children: prevChildren } = prevVNode;
+    const { props: prevProps, children: prevChildren, component } = prevVNode;
     const { props: nextProps, children: nextChildren, patchFlag } = nextVNode;
+    const emits = component.emitsOptions;
     // force child update for runtime directive or transition on component vnode.
     if (nextVNode.dirs || nextVNode.transition) {
         return true;
     }
-    if (optimized && patchFlag > 0) {
+    if (optimized && patchFlag >= 0) {
         if (patchFlag & 1024 /* DYNAMIC_SLOTS */) {
             // slot content that references values that might have changed,
             // e.g. in a v-for
@@ -1445,13 +1617,14 @@ function shouldUpdateComponent(prevVNode, nextVNode, optimized) {
                 return !!nextProps;
             }
             // presence of this flag indicates props are always non-null
-            return hasPropsChanged(prevProps, nextProps);
+            return hasPropsChanged(prevProps, nextProps, emits);
         }
         else if (patchFlag & 8 /* PROPS */) {
             const dynamicProps = nextVNode.dynamicProps;
             for (let i = 0; i < dynamicProps.length; i++) {
                 const key = dynamicProps[i];
-                if (nextProps[key] !== prevProps[key]) {
+                if (nextProps[key] !== prevProps[key] &&
+                    !isEmitListener(emits, key)) {
                     return true;
                 }
             }
@@ -1474,18 +1647,19 @@ function shouldUpdateComponent(prevVNode, nextVNode, optimized) {
         if (!nextProps) {
             return true;
         }
-        return hasPropsChanged(prevProps, nextProps);
+        return hasPropsChanged(prevProps, nextProps, emits);
     }
     return false;
 }
-function hasPropsChanged(prevProps, nextProps) {
+function hasPropsChanged(prevProps, nextProps, emitsOptions) {
     const nextKeys = Object.keys(nextProps);
     if (nextKeys.length !== Object.keys(prevProps).length) {
         return true;
     }
     for (let i = 0; i < nextKeys.length; i++) {
         const key = nextKeys[i];
-        if (nextProps[key] !== prevProps[key]) {
+        if (nextProps[key] !== prevProps[key] &&
+            !isEmitListener(emitsOptions, key)) {
             return true;
         }
     }
@@ -1500,8 +1674,35 @@ function updateHOCHostEl({ vnode, parent }, el // HostNode
 }
 
 const isSuspense = (type) => type.__isSuspense;
+function normalizeSuspenseChildren(vnode) {
+    const { shapeFlag, children } = vnode;
+    let content;
+    let fallback;
+    if (shapeFlag & 32 /* SLOTS_CHILDREN */) {
+        content = normalizeSuspenseSlot(children.default);
+        fallback = normalizeSuspenseSlot(children.fallback);
+    }
+    else {
+        content = normalizeSuspenseSlot(children);
+        fallback = normalizeVNode(null);
+    }
+    return {
+        content,
+        fallback
+    };
+}
+function normalizeSuspenseSlot(s) {
+    if (isFunction(s)) {
+        s = s();
+    }
+    if (isArray(s)) {
+        const singleChild = filterSingleRoot(s);
+        s = singleChild;
+    }
+    return normalizeVNode(s);
+}
 function queueEffectWithSuspense(fn, suspense) {
-    if (suspense && !suspense.isResolved) {
+    if (suspense && suspense.pendingBranch) {
         if (isArray(fn)) {
             suspense.effects.push(...fn);
         }
@@ -1547,399 +1748,6 @@ function withCtx(fn, ctx = currentRenderingInstance) {
 // SFC scoped style ID management.
 let currentScopeId = null;
 
-const isTeleport = (type) => type.__isTeleport;
-const NULL_DYNAMIC_COMPONENT = Symbol();
-
-const Fragment = Symbol( undefined);
-const Text = Symbol( undefined);
-const Comment = Symbol( undefined);
-const Static = Symbol( undefined);
-// Since v-if and v-for are the two possible ways node structure can dynamically
-// change, once we consider v-if branches and each v-for fragment a block, we
-// can divide a template into nested blocks, and within each block the node
-// structure would be stable. This allows us to skip most children diffing
-// and only worry about the dynamic nodes (indicated by patch flags).
-const blockStack = [];
-let currentBlock = null;
-/**
- * Open a block.
- * This must be called before `createBlock`. It cannot be part of `createBlock`
- * because the children of the block are evaluated before `createBlock` itself
- * is called. The generated code typically looks like this:
- *
- * ```js
- * function render() {
- *   return (openBlock(),createBlock('div', null, [...]))
- * }
- * ```
- * disableTracking is true when creating a v-for fragment block, since a v-for
- * fragment always diffs its children.
- *
- * @private
- */
-function openBlock(disableTracking = false) {
-    blockStack.push((currentBlock = disableTracking ? null : []));
-}
-function closeBlock() {
-    blockStack.pop();
-    currentBlock = blockStack[blockStack.length - 1] || null;
-}
-/**
- * Create a block root vnode. Takes the same exact arguments as `createVNode`.
- * A block root keeps track of dynamic nodes within the block in the
- * `dynamicChildren` array.
- *
- * @private
- */
-function createBlock(type, props, children, patchFlag, dynamicProps) {
-    const vnode = createVNode(type, props, children, patchFlag, dynamicProps, true /* isBlock: prevent a block from tracking itself */);
-    // save current block children on the block vnode
-    vnode.dynamicChildren = currentBlock || EMPTY_ARR;
-    // close block
-    closeBlock();
-    // a block is always going to be patched, so track it as a child of its
-    // parent block
-    if ( currentBlock) {
-        currentBlock.push(vnode);
-    }
-    return vnode;
-}
-function isVNode(value) {
-    return value ? value.__v_isVNode === true : false;
-}
-function isSameVNodeType(n1, n2) {
-    return n1.type === n2.type && n1.key === n2.key;
-}
-const InternalObjectKey = `__vInternal`;
-const normalizeKey = ({ key }) => key != null ? key : null;
-const normalizeRef = ({ ref }) => {
-    return (ref != null
-        ? isArray(ref)
-            ? ref
-            : [currentRenderingInstance, ref]
-        : null);
-};
-const createVNode = ( _createVNode);
-function _createVNode(type, props = null, children = null, patchFlag = 0, dynamicProps = null, isBlockNode = false) {
-    if (!type || type === NULL_DYNAMIC_COMPONENT) {
-        type = Comment;
-    }
-    if (isVNode(type)) {
-        const cloned = cloneVNode(type, props);
-        if (children) {
-            normalizeChildren(cloned, children);
-        }
-        return cloned;
-    }
-    // class component normalization.
-    if (isFunction(type) && '__vccOpts' in type) {
-        type = type.__vccOpts;
-    }
-    // class & style normalization.
-    if (props) {
-        // for reactive or proxy objects, we need to clone it to enable mutation.
-        if (isProxy(props) || InternalObjectKey in props) {
-            props = extend({}, props);
-        }
-        let { class: klass, style } = props;
-        if (klass && !isString(klass)) {
-            props.class = normalizeClass(klass);
-        }
-        if (isObject(style)) {
-            // reactive state objects need to be cloned since they are likely to be
-            // mutated
-            if (isProxy(style) && !isArray(style)) {
-                style = extend({}, style);
-            }
-            props.style = normalizeStyle(style);
-        }
-    }
-    // encode the vnode type information into a bitmap
-    const shapeFlag = isString(type)
-        ? 1 /* ELEMENT */
-        :  isSuspense(type)
-            ? 128 /* SUSPENSE */
-            : isTeleport(type)
-                ? 64 /* TELEPORT */
-                : isObject(type)
-                    ? 4 /* STATEFUL_COMPONENT */
-                    : isFunction(type)
-                        ? 2 /* FUNCTIONAL_COMPONENT */
-                        : 0;
-    const vnode = {
-        __v_isVNode: true,
-        ["__v_skip" /* SKIP */]: true,
-        type,
-        props,
-        key: props && normalizeKey(props),
-        ref: props && normalizeRef(props),
-        scopeId: currentScopeId,
-        children: null,
-        component: null,
-        suspense: null,
-        dirs: null,
-        transition: null,
-        el: null,
-        anchor: null,
-        target: null,
-        targetAnchor: null,
-        staticCount: 0,
-        shapeFlag,
-        patchFlag,
-        dynamicProps,
-        dynamicChildren: null,
-        appContext: null
-    };
-    normalizeChildren(vnode, children);
-    if (
-        // avoid a block node from tracking itself
-        !isBlockNode &&
-        // has current parent block
-        currentBlock &&
-        // presence of a patch flag indicates this node needs patching on updates.
-        // component nodes also should always be patched, because even if the
-        // component doesn't need to update, it needs to persist the instance on to
-        // the next vnode so that it can be properly unmounted later.
-        (patchFlag > 0 || shapeFlag & 6 /* COMPONENT */) &&
-        // the EVENTS flag is only for hydration and if it is the only flag, the
-        // vnode should not be considered dynamic due to handler caching.
-        patchFlag !== 32 /* HYDRATE_EVENTS */) {
-        currentBlock.push(vnode);
-    }
-    return vnode;
-}
-function cloneVNode(vnode, extraProps) {
-    // This is intentionally NOT using spread or extend to avoid the runtime
-    // key enumeration cost.
-    const { props, patchFlag } = vnode;
-    const mergedProps = extraProps ? mergeProps(props || {}, extraProps) : props;
-    return {
-        __v_isVNode: true,
-        ["__v_skip" /* SKIP */]: true,
-        type: vnode.type,
-        props: mergedProps,
-        key: mergedProps && normalizeKey(mergedProps),
-        ref: extraProps && extraProps.ref ? normalizeRef(extraProps) : vnode.ref,
-        scopeId: vnode.scopeId,
-        children: vnode.children,
-        target: vnode.target,
-        targetAnchor: vnode.targetAnchor,
-        staticCount: vnode.staticCount,
-        shapeFlag: vnode.shapeFlag,
-        // if the vnode is cloned with extra props, we can no longer assume its
-        // existing patch flag to be reliable and need to add the FULL_PROPS flag.
-        // note: perserve flag for fragments since they use the flag for children
-        // fast paths only.
-        patchFlag: extraProps && vnode.type !== Fragment
-            ? patchFlag === -1 // hoisted node
-                ? 16 /* FULL_PROPS */
-                : patchFlag | 16 /* FULL_PROPS */
-            : patchFlag,
-        dynamicProps: vnode.dynamicProps,
-        dynamicChildren: vnode.dynamicChildren,
-        appContext: vnode.appContext,
-        dirs: vnode.dirs,
-        transition: vnode.transition,
-        // These should technically only be non-null on mounted VNodes. However,
-        // they *should* be copied for kept-alive vnodes. So we just always copy
-        // them since them being non-null during a mount doesn't affect the logic as
-        // they will simply be overwritten.
-        component: vnode.component,
-        suspense: vnode.suspense,
-        el: vnode.el,
-        anchor: vnode.anchor
-    };
-}
-/**
- * @private
- */
-function createTextVNode(text = ' ', flag = 0) {
-    return createVNode(Text, null, text, flag);
-}
-function normalizeVNode(child) {
-    if (child == null || typeof child === 'boolean') {
-        // empty placeholder
-        return createVNode(Comment);
-    }
-    else if (isArray(child)) {
-        // fragment
-        return createVNode(Fragment, null, child);
-    }
-    else if (typeof child === 'object') {
-        // already vnode, this should be the most common since compiled templates
-        // always produce all-vnode children arrays
-        return child.el === null ? child : cloneVNode(child);
-    }
-    else {
-        // strings and numbers
-        return createVNode(Text, null, String(child));
-    }
-}
-// optimized normalization for template-compiled render fns
-function cloneIfMounted(child) {
-    return child.el === null ? child : cloneVNode(child);
-}
-function normalizeChildren(vnode, children) {
-    let type = 0;
-    const { shapeFlag } = vnode;
-    if (children == null) {
-        children = null;
-    }
-    else if (isArray(children)) {
-        type = 16 /* ARRAY_CHILDREN */;
-    }
-    else if (typeof children === 'object') {
-        if (shapeFlag & 1 /* ELEMENT */ || shapeFlag & 64 /* TELEPORT */) {
-            // Normalize slot to plain children for plain element and Teleport
-            const slot = children.default;
-            if (slot) {
-                // _c marker is added by withCtx() indicating this is a compiled slot
-                slot._c && setCompiledSlotRendering(1);
-                normalizeChildren(vnode, slot());
-                slot._c && setCompiledSlotRendering(-1);
-            }
-            return;
-        }
-        else {
-            type = 32 /* SLOTS_CHILDREN */;
-            const slotFlag = children._;
-            if (!slotFlag && !(InternalObjectKey in children)) {
-                children._ctx = currentRenderingInstance;
-            }
-            else if (slotFlag === 3 /* FORWARDED */ && currentRenderingInstance) {
-                // a child component receives forwarded slots from the parent.
-                // its slot type is determined by its parent's slot type.
-                if (currentRenderingInstance.vnode.patchFlag & 1024 /* DYNAMIC_SLOTS */) {
-                    children._ = 2 /* DYNAMIC */;
-                    vnode.patchFlag |= 1024 /* DYNAMIC_SLOTS */;
-                }
-                else {
-                    children._ = 1 /* STABLE */;
-                }
-            }
-        }
-    }
-    else if (isFunction(children)) {
-        children = { default: children, _ctx: currentRenderingInstance };
-        type = 32 /* SLOTS_CHILDREN */;
-    }
-    else {
-        children = String(children);
-        // force teleport children to array so it can be moved around
-        if (shapeFlag & 64 /* TELEPORT */) {
-            type = 16 /* ARRAY_CHILDREN */;
-            children = [createTextVNode(children)];
-        }
-        else {
-            type = 8 /* TEXT_CHILDREN */;
-        }
-    }
-    vnode.children = children;
-    vnode.shapeFlag |= type;
-}
-function mergeProps(...args) {
-    const ret = extend({}, args[0]);
-    for (let i = 1; i < args.length; i++) {
-        const toMerge = args[i];
-        for (const key in toMerge) {
-            if (key === 'class') {
-                if (ret.class !== toMerge.class) {
-                    ret.class = normalizeClass([ret.class, toMerge.class]);
-                }
-            }
-            else if (key === 'style') {
-                ret.style = normalizeStyle([ret.style, toMerge.style]);
-            }
-            else if (isOn(key)) {
-                const existing = ret[key];
-                const incoming = toMerge[key];
-                if (existing !== incoming) {
-                    ret[key] = existing
-                        ? [].concat(existing, toMerge[key])
-                        : incoming;
-                }
-            }
-            else {
-                ret[key] = toMerge[key];
-            }
-        }
-    }
-    return ret;
-}
-
-function emit(instance, event, ...args) {
-    const props = instance.vnode.props || EMPTY_OBJ;
-    if ( __VUE_PROD_DEVTOOLS__) ;
-    let handlerName = `on${capitalize(event)}`;
-    let handler = props[handlerName];
-    // for v-model update:xxx events, also trigger kebab-case equivalent
-    // for props passed via kebab-case
-    if (!handler && event.startsWith('update:')) {
-        handlerName = `on${capitalize(hyphenate(event))}`;
-        handler = props[handlerName];
-    }
-    if (!handler) {
-        handler = props[handlerName + `Once`];
-        if (!instance.emitted) {
-            (instance.emitted = {})[handlerName] = true;
-        }
-        else if (instance.emitted[handlerName]) {
-            return;
-        }
-    }
-    if (handler) {
-        callWithAsyncErrorHandling(handler, instance, 6 /* COMPONENT_EVENT_HANDLER */, args);
-    }
-}
-function normalizeEmitsOptions(comp, appContext, asMixin = false) {
-    const appId = appContext.app ? appContext.app._uid : -1;
-    const cache = comp.__emits || (comp.__emits = {});
-    const cached = cache[appId];
-    if (cached !== undefined) {
-        return cached;
-    }
-    const raw = comp.emits;
-    let normalized = {};
-    // apply mixin/extends props
-    let hasExtends = false;
-    if (__VUE_OPTIONS_API__ && !isFunction(comp)) {
-        const extendEmits = (raw) => {
-            hasExtends = true;
-            extend(normalized, normalizeEmitsOptions(raw, appContext, true));
-        };
-        if (!asMixin && appContext.mixins.length) {
-            appContext.mixins.forEach(extendEmits);
-        }
-        if (comp.extends) {
-            extendEmits(comp.extends);
-        }
-        if (comp.mixins) {
-            comp.mixins.forEach(extendEmits);
-        }
-    }
-    if (!raw && !hasExtends) {
-        return (cache[appId] = null);
-    }
-    if (isArray(raw)) {
-        raw.forEach(key => (normalized[key] = null));
-    }
-    else {
-        extend(normalized, raw);
-    }
-    return (cache[appId] = normalized);
-}
-// Check if an incoming prop key is a declared emit event listener.
-// e.g. With `emits: { click: null }`, props named `onClick` and `onclick` are
-// both considered matched listeners.
-function isEmitListener(options, key) {
-    if (!options || !isOn(key)) {
-        return false;
-    }
-    key = key.replace(/Once$/, '');
-    return (hasOwn(options, key[2].toLowerCase() + key.slice(3)) ||
-        hasOwn(options, key.slice(2)));
-}
-
 function initProps(instance, rawProps, isStateful, // result of bitwise flag comparison
 isSSR = false) {
     const props = {};
@@ -1967,7 +1775,9 @@ function updateProps(instance, rawProps, rawPrevProps, optimized) {
     const rawCurrentProps = toRaw(props);
     const [options] = instance.propsOptions;
     if (
-    // always force full diff if hmr is enabled
+    // always force full diff in dev
+    // - #1942 if hmr is enabled with sfc component
+    // - vite#872 non-sfc component used by sfc component
     
         (optimized || patchFlag > 0) &&
         !(patchFlag & 16 /* FULL_PROPS */)) {
@@ -1987,7 +1797,7 @@ function updateProps(instance, rawProps, rawPrevProps, optimized) {
                     }
                     else {
                         const camelizedKey = camelize(key);
-                        props[camelizedKey] = resolvePropValue(options, rawCurrentProps, camelizedKey, value);
+                        props[camelizedKey] = resolvePropValue(options, rawCurrentProps, camelizedKey, value, instance);
                     }
                 }
                 else {
@@ -2015,7 +1825,7 @@ function updateProps(instance, rawProps, rawPrevProps, optimized) {
                         (rawPrevProps[key] !== undefined ||
                             // for kebab-case
                             rawPrevProps[kebabKey] !== undefined)) {
-                        props[key] = resolvePropValue(options, rawProps || EMPTY_OBJ, key, undefined);
+                        props[key] = resolvePropValue(options, rawProps || EMPTY_OBJ, key, undefined, instance);
                     }
                 }
                 else {
@@ -2063,21 +1873,25 @@ function setFullProps(instance, rawProps, props, attrs) {
         const rawCurrentProps = toRaw(props);
         for (let i = 0; i < needCastKeys.length; i++) {
             const key = needCastKeys[i];
-            props[key] = resolvePropValue(options, rawCurrentProps, key, rawCurrentProps[key]);
+            props[key] = resolvePropValue(options, rawCurrentProps, key, rawCurrentProps[key], instance);
         }
     }
 }
-function resolvePropValue(options, props, key, value) {
+function resolvePropValue(options, props, key, value, instance) {
     const opt = options[key];
     if (opt != null) {
         const hasDefault = hasOwn(opt, 'default');
         // default values
         if (hasDefault && value === undefined) {
             const defaultValue = opt.default;
-            value =
-                opt.type !== Function && isFunction(defaultValue)
-                    ? defaultValue(props)
-                    : defaultValue;
+            if (opt.type !== Function && isFunction(defaultValue)) {
+                setCurrentInstance(instance);
+                value = defaultValue(props);
+                setCurrentInstance(null);
+            }
+            else {
+                value = defaultValue;
+            }
         }
         // boolean casting
         if (opt[0 /* shouldCast */]) {
@@ -2093,11 +1907,8 @@ function resolvePropValue(options, props, key, value) {
     return value;
 }
 function normalizePropsOptions(comp, appContext, asMixin = false) {
-    const appId = appContext.app ? appContext.app._uid : -1;
-    const cache = comp.__props || (comp.__props = {});
-    const cached = cache[appId];
-    if (cached) {
-        return cached;
+    if (!appContext.deopt && comp.__props) {
+        return comp.__props;
     }
     const raw = comp.props;
     const normalized = {};
@@ -2123,7 +1934,7 @@ function normalizePropsOptions(comp, appContext, asMixin = false) {
         }
     }
     if (!raw && !hasExtends) {
-        return (cache[appId] = EMPTY_ARR);
+        return (comp.__props = EMPTY_ARR);
     }
     if (isArray(raw)) {
         for (let i = 0; i < raw.length; i++) {
@@ -2154,7 +1965,13 @@ function normalizePropsOptions(comp, appContext, asMixin = false) {
             }
         }
     }
-    return (cache[appId] = [normalized, needCastKeys]);
+    return (comp.__props = [normalized, needCastKeys]);
+}
+function validatePropName(key) {
+    if (key[0] !== '$') {
+        return true;
+    }
+    return false;
 }
 // use function string name to check type constructors
 // so that it works across vms / iframes.
@@ -2177,15 +1994,6 @@ function getTypeIndex(type, expectedTypes) {
         return isSameType(expectedTypes, type) ? 0 : -1;
     }
     return -1;
-}
-/**
- * dev only
- */
-function validatePropName(key) {
-    if (key[0] !== '$') {
-        return true;
-    }
-    return false;
 }
 
 function injectHook(type, hook, target = currentInstance, prepend = false) {
@@ -2234,6 +2042,180 @@ const onRenderTracked = createHook("rtc" /* RENDER_TRACKED */);
 const onErrorCaptured = (hook, target = currentInstance) => {
     injectHook("ec" /* ERROR_CAPTURED */, hook, target);
 };
+// initial value for watchers to trigger on undefined initial values
+const INITIAL_WATCHER_VALUE = {};
+// implementation
+function watch(source, cb, options) {
+    return doWatch(source, cb, options);
+}
+function doWatch(source, cb, { immediate, deep, flush, onTrack, onTrigger } = EMPTY_OBJ, instance = currentInstance) {
+    let getter;
+    let forceTrigger = false;
+    if (isRef(source)) {
+        getter = () => source.value;
+        forceTrigger = !!source._shallow;
+    }
+    else if (isReactive(source)) {
+        getter = () => source;
+        deep = true;
+    }
+    else if (isArray(source)) {
+        getter = () => source.map(s => {
+            if (isRef(s)) {
+                return s.value;
+            }
+            else if (isReactive(s)) {
+                return traverse(s);
+            }
+            else if (isFunction(s)) {
+                return callWithErrorHandling(s, instance, 2 /* WATCH_GETTER */);
+            }
+            else ;
+        });
+    }
+    else if (isFunction(source)) {
+        if (cb) {
+            // getter with cb
+            getter = () => callWithErrorHandling(source, instance, 2 /* WATCH_GETTER */);
+        }
+        else {
+            // no cb -> simple effect
+            getter = () => {
+                if (instance && instance.isUnmounted) {
+                    return;
+                }
+                if (cleanup) {
+                    cleanup();
+                }
+                return callWithErrorHandling(source, instance, 3 /* WATCH_CALLBACK */, [onInvalidate]);
+            };
+        }
+    }
+    else {
+        getter = NOOP;
+    }
+    if (cb && deep) {
+        const baseGetter = getter;
+        getter = () => traverse(baseGetter());
+    }
+    let cleanup;
+    const onInvalidate = (fn) => {
+        cleanup = runner.options.onStop = () => {
+            callWithErrorHandling(fn, instance, 4 /* WATCH_CLEANUP */);
+        };
+    };
+    let oldValue = isArray(source) ? [] : INITIAL_WATCHER_VALUE;
+    const job = () => {
+        if (!runner.active) {
+            return;
+        }
+        if (cb) {
+            // watch(source, cb)
+            const newValue = runner();
+            if (deep || forceTrigger || hasChanged(newValue, oldValue)) {
+                // cleanup before running cb again
+                if (cleanup) {
+                    cleanup();
+                }
+                callWithAsyncErrorHandling(cb, instance, 3 /* WATCH_CALLBACK */, [
+                    newValue,
+                    // pass undefined as the old value when it's changed for the first time
+                    oldValue === INITIAL_WATCHER_VALUE ? undefined : oldValue,
+                    onInvalidate
+                ]);
+                oldValue = newValue;
+            }
+        }
+        else {
+            // watchEffect
+            runner();
+        }
+    };
+    // important: mark the job as a watcher callback so that scheduler knows
+    // it is allowed to self-trigger (#1727)
+    job.allowRecurse = !!cb;
+    let scheduler;
+    if (flush === 'sync') {
+        scheduler = job;
+    }
+    else if (flush === 'post') {
+        scheduler = () => queuePostRenderEffect(job, instance && instance.suspense);
+    }
+    else {
+        // default: 'pre'
+        scheduler = () => {
+            if (!instance || instance.isMounted) {
+                queuePreFlushCb(job);
+            }
+            else {
+                // with 'pre' option, the first call must happen before
+                // the component is mounted so it is called synchronously.
+                job();
+            }
+        };
+    }
+    const runner = effect(getter, {
+        lazy: true,
+        onTrack,
+        onTrigger,
+        scheduler
+    });
+    recordInstanceBoundEffect(runner, instance);
+    // initial run
+    if (cb) {
+        if (immediate) {
+            job();
+        }
+        else {
+            oldValue = runner();
+        }
+    }
+    else if (flush === 'post') {
+        queuePostRenderEffect(runner, instance && instance.suspense);
+    }
+    else {
+        runner();
+    }
+    return () => {
+        stop(runner);
+        if (instance) {
+            remove(instance.effects, runner);
+        }
+    };
+}
+// this.$watch
+function instanceWatch(source, cb, options) {
+    const publicThis = this.proxy;
+    const getter = isString(source)
+        ? () => publicThis[source]
+        : source.bind(publicThis);
+    return doWatch(getter, cb.bind(publicThis), options, this);
+}
+function traverse(value, seen = new Set()) {
+    if (!isObject(value) || seen.has(value)) {
+        return value;
+    }
+    seen.add(value);
+    if (isRef(value)) {
+        traverse(value.value, seen);
+    }
+    else if (isArray(value)) {
+        for (let i = 0; i < value.length; i++) {
+            traverse(value[i], seen);
+        }
+    }
+    else if (isSet(value) || isMap(value)) {
+        value.forEach((v) => {
+            traverse(v, seen);
+        });
+    }
+    else {
+        for (const key in value) {
+            traverse(value[key], seen);
+        }
+    }
+    return value;
+}
 
 const isKeepAlive = (vnode) => vnode.type.__isKeepAlive;
 function onActivated(hook, target) {
@@ -2473,6 +2455,11 @@ function createAppAPI(render, hydrate) {
                 if (__VUE_OPTIONS_API__) {
                     if (!context.mixins.includes(mixin)) {
                         context.mixins.push(mixin);
+                        // global mixin with props/emits de-optimizes props/emits
+                        // normalization caching.
+                        if (mixin.props || mixin.emits) {
+                            context.deopt = true;
+                        }
                     }
                 }
                 return app;
@@ -2543,26 +2530,34 @@ function initFeatureFlags() {
     }
 }
 
+const isAsyncWrapper = (i) => !!i.type.__asyncLoader;
+
 const prodEffectOptions = {
-    scheduler: queueJob
+    scheduler: queueJob,
+    // #1801, #2043 component render effects should allow recursive updates
+    allowRecurse: true
 };
 const queuePostRenderEffect =  queueEffectWithSuspense
     ;
-const setRef = (rawRef, oldRawRef, parentComponent, parentSuspense, vnode) => {
+const setRef = (rawRef, oldRawRef, parentSuspense, vnode) => {
+    if (isArray(rawRef)) {
+        rawRef.forEach((r, i) => setRef(r, oldRawRef && (isArray(oldRawRef) ? oldRawRef[i] : oldRawRef), parentSuspense, vnode));
+        return;
+    }
     let value;
-    if (!vnode) {
+    if (!vnode || isAsyncWrapper(vnode)) {
         value = null;
     }
     else {
         if (vnode.shapeFlag & 4 /* STATEFUL_COMPONENT */) {
-            value = vnode.component.proxy;
+            value = vnode.component.exposed || vnode.component.proxy;
         }
         else {
             value = vnode.el;
         }
     }
-    const [owner, ref] = rawRef;
-    const oldRef = oldRawRef && oldRawRef[1];
+    const { i: owner, r: ref } = rawRef;
+    const oldRef = oldRawRef && oldRawRef.r;
     const refs = owner.refs === EMPTY_OBJ ? (owner.refs = {}) : owner.refs;
     const setupState = owner.setupState;
     // unset old ref
@@ -2608,10 +2603,7 @@ const setRef = (rawRef, oldRawRef, parentComponent, parentSuspense, vnode) => {
         }
     }
     else if (isFunction(ref)) {
-        callWithErrorHandling(ref, parentComponent, 12 /* FUNCTION_REF */, [
-            value,
-            refs
-        ]);
+        callWithErrorHandling(ref, owner, 12 /* FUNCTION_REF */, [value, refs]);
     }
     else ;
 };
@@ -2686,7 +2678,7 @@ function baseCreateRenderer(options, createHydrationFns) {
         }
         // set ref
         if (ref != null && parentComponent) {
-            setRef(ref, n1 && n1.ref, parentComponent, parentSuspense, n2);
+            setRef(ref, n1 && n1.ref, parentSuspense, n2);
         }
     };
     const processText = (n1, n2, container, anchor) => {
@@ -2711,6 +2703,24 @@ function baseCreateRenderer(options, createHydrationFns) {
     };
     const mountStaticNode = (n2, container, anchor, isSVG) => {
         [n2.el, n2.anchor] = hostInsertStaticContent(n2.children, container, anchor, isSVG);
+    };
+    const moveStaticNode = ({ el, anchor }, container, nextSibling) => {
+        let next;
+        while (el && el !== anchor) {
+            next = hostNextSibling(el);
+            hostInsert(el, container, nextSibling);
+            el = next;
+        }
+        hostInsert(anchor, container, nextSibling);
+    };
+    const removeStaticNode = ({ el, anchor }) => {
+        let next;
+        while (el && el !== anchor) {
+            next = hostNextSibling(el);
+            hostRemove(el);
+            el = next;
+        }
+        hostRemove(anchor);
     };
     const processElement = (n1, n2, container, anchor, parentComponent, parentSuspense, isSVG, optimized) => {
         isSVG = isSVG || n2.type === 'svg';
@@ -2761,30 +2771,6 @@ function baseCreateRenderer(options, createHydrationFns) {
             }
             // scopeId
             setScopeId(el, scopeId, vnode, parentComponent);
-            // if (scopeId) {
-            //   hostSetScopeId(el, scopeId)
-            // }
-            // if (parentComponent) {
-            //   const treeOwnerId = parentComponent.type.__scopeId
-            //   // vnode's own scopeId and the current patched component's scopeId is
-            //   // different - this is a slot content node.
-            //   if (treeOwnerId && treeOwnerId !== scopeId) {
-            //     hostSetScopeId(el, treeOwnerId + '-s')
-            //   }
-            //   const parentScopeId =
-            //     vnode === parentComponent.subTree && parentComponent.vnode.scopeId
-            //   if (parentScopeId) {
-            //     hostSetScopeId(el, parentScopeId)
-            //     if (parentComponent.parent) {
-            //       const treeOwnerId = parentComponent.parent.type.__scopeId
-            //       // vnode's own scopeId and the current patched component's scopeId is
-            //       // different - this is a slot content node.
-            //       if (treeOwnerId && treeOwnerId !== parentScopeId) {
-            //         hostSetScopeId(el, treeOwnerId + '-s')
-            //       }
-            //     }
-            //   }
-            // }
         }
         if ( __VUE_PROD_DEVTOOLS__) {
             Object.defineProperty(el, '__vnode', {
@@ -2801,7 +2787,7 @@ function baseCreateRenderer(options, createHydrationFns) {
         }
         // #1583 For inside suspense + suspense not resolved case, enter hook should call when suspense resolved
         // #1689 For inside suspense + suspense resolved case, just call it
-        const needCallTransitionHooks = (!parentSuspense || (parentSuspense && parentSuspense.isResolved)) &&
+        const needCallTransitionHooks = (!parentSuspense || (parentSuspense && !parentSuspense.pendingBranch)) &&
             transition &&
             !transition.persisted;
         if (needCallTransitionHooks) {
@@ -2829,7 +2815,8 @@ function baseCreateRenderer(options, createHydrationFns) {
             if (treeOwnerId && treeOwnerId !== scopeId) {
                 hostSetScopeId(el, treeOwnerId + '-s');
             }
-            if (vnode === parentComponent.subTree) {
+            let subTree = parentComponent.subTree;
+            if (vnode === subTree) {
                 setScopeId(el, parentComponent.vnode.scopeId, parentComponent.vnode, parentComponent.parent);
             }
         }
@@ -2952,6 +2939,7 @@ function baseCreateRenderer(options, createHydrationFns) {
     const patchProps = (el, vnode, oldProps, newProps, parentComponent, parentSuspense, isSVG) => {
         if (oldProps !== newProps) {
             for (const key in newProps) {
+                // empty string is not valid prop
                 if (isReservedProp(key))
                     continue;
                 const next = newProps[key];
@@ -2992,6 +2980,15 @@ function baseCreateRenderer(options, createHydrationFns) {
                 // a stable fragment (template root or <template v-for>) doesn't need to
                 // patch children order, but it may contain dynamicChildren.
                 patchBlockChildren(n1.dynamicChildren, dynamicChildren, container, parentComponent, parentSuspense, isSVG);
+                if (
+                // #2080 if the stable fragment has a key, it's a <template v-for> that may
+                //  get moved around. Make sure all root level vnodes inherit el.
+                // #2134 or if it's a component root, it may also get moved around
+                // as the component is being moved.
+                n2.key != null ||
+                    (parentComponent && n2 === parentComponent.subTree)) {
+                    traverseStaticChildren(n1, n2, true /* shallow */);
+                }
             }
             else {
                 // keyed / unkeyed, or manual fragments.
@@ -3025,11 +3022,9 @@ function baseCreateRenderer(options, createHydrationFns) {
         // setup() is async. This component relies on async logic to be resolved
         // before proceeding
         if ( instance.asyncDep) {
-            if (!parentSuspense) {
-                return;
-            }
-            parentSuspense.registerDep(instance, setupRenderEffect);
+            parentSuspense && parentSuspense.registerDep(instance, setupRenderEffect);
             // Give it a placeholder if this is not hydration
+            // TODO handle self-defined fallback
             if (!initialVNode.el) {
                 const placeholder = (instance.subTree = createVNode(Comment));
                 processCommentNode(null, placeholder, container, anchor);
@@ -3116,12 +3111,12 @@ function baseCreateRenderer(options, createHydrationFns) {
                 let originNext = next;
                 let vnodeHook;
                 if (next) {
+                    next.el = vnode.el;
                     updateComponentPreRender(instance, next, optimized);
                 }
                 else {
                     next = vnode;
                 }
-                next.el = vnode.el;
                 // beforeUpdate hook
                 if (bu) {
                     invokeArrayFns(bu);
@@ -3133,11 +3128,6 @@ function baseCreateRenderer(options, createHydrationFns) {
                 const nextTree = renderComponentRoot(instance);
                 const prevTree = instance.subTree;
                 instance.subTree = nextTree;
-                // reset refs
-                // only needed if previous patch had refs
-                if (instance.refs !== EMPTY_OBJ) {
-                    instance.refs = {};
-                }
                 patch(prevTree, nextTree, 
                 // parent may have changed if it's in a teleport
                 hostParentNode(prevTree.el), 
@@ -3163,7 +3153,6 @@ function baseCreateRenderer(options, createHydrationFns) {
                 if ( __VUE_PROD_DEVTOOLS__) ;
             }
         },  prodEffectOptions);
-        instance.update.allowRecurse = true;
     };
     const updateComponentPreRender = (instance, nextVNode, optimized) => {
         nextVNode.component = instance;
@@ -3245,7 +3234,7 @@ function baseCreateRenderer(options, createHydrationFns) {
         }
         if (oldLength > newLength) {
             // remove old
-            unmountChildren(c1, parentComponent, parentSuspense, true, commonLength);
+            unmountChildren(c1, parentComponent, parentSuspense, true, false, commonLength);
         }
         else {
             // mount new
@@ -3443,6 +3432,10 @@ function baseCreateRenderer(options, createHydrationFns) {
             hostInsert(vnode.anchor, container, anchor);
             return;
         }
+        if (type === Static) {
+            moveStaticNode(vnode, container, anchor);
+            return;
+        }
         // single nodes
         const needTransition = moveType !== 2 /* REORDER */ &&
             shapeFlag & 1 /* ELEMENT */ &&
@@ -3474,11 +3467,11 @@ function baseCreateRenderer(options, createHydrationFns) {
             hostInsert(el, container, anchor);
         }
     };
-    const unmount = (vnode, parentComponent, parentSuspense, doRemove = false) => {
+    const unmount = (vnode, parentComponent, parentSuspense, doRemove = false, optimized = false) => {
         const { type, props, ref, children, dynamicChildren, shapeFlag, patchFlag, dirs } = vnode;
         // unset ref
-        if (ref != null && parentComponent) {
-            setRef(ref, null, parentComponent, parentSuspense, null);
+        if (ref != null) {
+            setRef(ref, null, parentSuspense, null);
         }
         if (shapeFlag & 256 /* COMPONENT_SHOULD_KEEP_ALIVE */) {
             parentComponent.ctx.deactivate(vnode);
@@ -3505,13 +3498,17 @@ function baseCreateRenderer(options, createHydrationFns) {
                 (type !== Fragment ||
                     (patchFlag > 0 && patchFlag & 64 /* STABLE_FRAGMENT */))) {
                 // fast path for block nodes: only need to unmount dynamic children.
-                unmountChildren(dynamicChildren, parentComponent, parentSuspense);
+                unmountChildren(dynamicChildren, parentComponent, parentSuspense, false, true);
             }
-            else if (shapeFlag & 16 /* ARRAY_CHILDREN */) {
+            else if ((type === Fragment &&
+                (patchFlag & 128 /* KEYED_FRAGMENT */ ||
+                    patchFlag & 256 /* UNKEYED_FRAGMENT */)) ||
+                (!optimized && shapeFlag & 16 /* ARRAY_CHILDREN */)) {
                 unmountChildren(children, parentComponent, parentSuspense);
             }
-            // an unmounted teleport should always remove its children
-            if (shapeFlag & 64 /* TELEPORT */) {
+            // an unmounted teleport should always remove its children if not disabled
+            if (shapeFlag & 64 /* TELEPORT */ &&
+                (doRemove || !isTeleportDisabled(vnode.props))) {
                 vnode.type.remove(vnode, internals);
             }
             if (doRemove) {
@@ -3530,6 +3527,10 @@ function baseCreateRenderer(options, createHydrationFns) {
         const { type, el, anchor, transition } = vnode;
         if (type === Fragment) {
             removeFragment(el, anchor);
+            return;
+        }
+        if (type === Static) {
+            removeStaticNode(vnode);
             return;
         }
         const performRemove = () => {
@@ -3594,10 +3595,11 @@ function baseCreateRenderer(options, createHydrationFns) {
         // cause the suspense to resolve immediately if that was the last dep.
         if (
             parentSuspense &&
-            !parentSuspense.isResolved &&
+            parentSuspense.pendingBranch &&
             !parentSuspense.isUnmounted &&
             instance.asyncDep &&
-            !instance.asyncResolved) {
+            !instance.asyncResolved &&
+            instance.suspenseId === parentSuspense.pendingId) {
             parentSuspense.deps--;
             if (parentSuspense.deps === 0) {
                 parentSuspense.resolve();
@@ -3605,9 +3607,9 @@ function baseCreateRenderer(options, createHydrationFns) {
         }
         if ( __VUE_PROD_DEVTOOLS__) ;
     };
-    const unmountChildren = (children, parentComponent, parentSuspense, doRemove = false, start = 0) => {
+    const unmountChildren = (children, parentComponent, parentSuspense, doRemove = false, optimized = false, start = 0) => {
         for (let i = start; i < children.length; i++) {
-            unmount(children[i], parentComponent, parentSuspense, doRemove);
+            unmount(children[i], parentComponent, parentSuspense, doRemove, optimized);
         }
     };
     const getNextHostNode = vnode => {
@@ -3660,6 +3662,37 @@ function invokeVNodeHook(hook, instance, vnode, prevVNode = null) {
         prevVNode
     ]);
 }
+/**
+ * #1156
+ * When a component is HMR-enabled, we need to make sure that all static nodes
+ * inside a block also inherit the DOM element from the previous tree so that
+ * HMR updates (which are full updates) can retrieve the element for patching.
+ *
+ * #2080
+ * Inside keyed `template` fragment static children, if a fragment is moved,
+ * the children will always moved so that need inherit el form previous nodes
+ * to ensure correct moved position.
+ */
+function traverseStaticChildren(n1, n2, shallow = false) {
+    const ch1 = n1.children;
+    const ch2 = n2.children;
+    if (isArray(ch1) && isArray(ch2)) {
+        for (let i = 0; i < ch1.length; i++) {
+            // this is only called in the optimized path so array children are
+            // guaranteed to be vnodes
+            const c1 = ch1[i];
+            let c2 = ch2[i];
+            if (c2.shapeFlag & 1 /* ELEMENT */ && !c2.dynamicChildren) {
+                if (c2.patchFlag <= 0 || c2.patchFlag === 32 /* HYDRATE_EVENTS */) {
+                    c2 = ch2[i] = cloneIfMounted(ch2[i]);
+                    c2.el = c1.el;
+                }
+                if (!shallow)
+                    traverseStaticChildren(c1, c2);
+            }
+        }
+    }
+}
 // https://en.wikipedia.org/wiki/Longest_increasing_subsequence
 function getSequence(arr) {
     const p = arr.slice();
@@ -3702,182 +3735,348 @@ function getSequence(arr) {
     }
     return result;
 }
-// initial value for watchers to trigger on undefined initial values
-const INITIAL_WATCHER_VALUE = {};
-// implementation
-function watch(source, cb, options) {
-    return doWatch(source, cb, options);
+
+const isTeleport = (type) => type.__isTeleport;
+const isTeleportDisabled = (props) => props && (props.disabled || props.disabled === '');
+const NULL_DYNAMIC_COMPONENT = Symbol();
+
+const Fragment = Symbol( undefined);
+const Text = Symbol( undefined);
+const Comment = Symbol( undefined);
+const Static = Symbol( undefined);
+// Since v-if and v-for are the two possible ways node structure can dynamically
+// change, once we consider v-if branches and each v-for fragment a block, we
+// can divide a template into nested blocks, and within each block the node
+// structure would be stable. This allows us to skip most children diffing
+// and only worry about the dynamic nodes (indicated by patch flags).
+const blockStack = [];
+let currentBlock = null;
+/**
+ * Open a block.
+ * This must be called before `createBlock`. It cannot be part of `createBlock`
+ * because the children of the block are evaluated before `createBlock` itself
+ * is called. The generated code typically looks like this:
+ *
+ * ```js
+ * function render() {
+ *   return (openBlock(),createBlock('div', null, [...]))
+ * }
+ * ```
+ * disableTracking is true when creating a v-for fragment block, since a v-for
+ * fragment always diffs its children.
+ *
+ * @private
+ */
+function openBlock(disableTracking = false) {
+    blockStack.push((currentBlock = disableTracking ? null : []));
 }
-function doWatch(source, cb, { immediate, deep, flush, onTrack, onTrigger } = EMPTY_OBJ, instance = currentInstance) {
-    let getter;
-    const isRefSource = isRef(source);
-    if (isRefSource) {
-        getter = () => source.value;
+function closeBlock() {
+    blockStack.pop();
+    currentBlock = blockStack[blockStack.length - 1] || null;
+}
+/**
+ * Create a block root vnode. Takes the same exact arguments as `createVNode`.
+ * A block root keeps track of dynamic nodes within the block in the
+ * `dynamicChildren` array.
+ *
+ * @private
+ */
+function createBlock(type, props, children, patchFlag, dynamicProps) {
+    const vnode = createVNode(type, props, children, patchFlag, dynamicProps, true /* isBlock: prevent a block from tracking itself */);
+    // save current block children on the block vnode
+    vnode.dynamicChildren = currentBlock || EMPTY_ARR;
+    // close block
+    closeBlock();
+    // a block is always going to be patched, so track it as a child of its
+    // parent block
+    if ( currentBlock) {
+        currentBlock.push(vnode);
     }
-    else if (isReactive(source)) {
-        getter = () => source;
-        deep = true;
+    return vnode;
+}
+function isVNode(value) {
+    return value ? value.__v_isVNode === true : false;
+}
+function isSameVNodeType(n1, n2) {
+    return n1.type === n2.type && n1.key === n2.key;
+}
+const InternalObjectKey = `__vInternal`;
+const normalizeKey = ({ key }) => key != null ? key : null;
+const normalizeRef = ({ ref }) => {
+    return (ref != null
+        ? isString(ref) || isRef(ref) || isFunction(ref)
+            ? { i: currentRenderingInstance, r: ref }
+            : ref
+        : null);
+};
+const createVNode = ( _createVNode);
+function _createVNode(type, props = null, children = null, patchFlag = 0, dynamicProps = null, isBlockNode = false) {
+    if (!type || type === NULL_DYNAMIC_COMPONENT) {
+        type = Comment;
     }
-    else if (isArray(source)) {
-        getter = () => source.map(s => {
-            if (isRef(s)) {
-                return s.value;
-            }
-            else if (isReactive(s)) {
-                return traverse(s);
-            }
-            else if (isFunction(s)) {
-                return callWithErrorHandling(s, instance, 2 /* WATCH_GETTER */);
-            }
-            else ;
-        });
-    }
-    else if (isFunction(source)) {
-        if (cb) {
-            // getter with cb
-            getter = () => callWithErrorHandling(source, instance, 2 /* WATCH_GETTER */);
+    if (isVNode(type)) {
+        // createVNode receiving an existing vnode. This happens in cases like
+        // <component :is="vnode"/>
+        // #2078 make sure to merge refs during the clone instead of overwriting it
+        const cloned = cloneVNode(type, props, true /* mergeRef: true */);
+        if (children) {
+            normalizeChildren(cloned, children);
         }
-        else {
-            // no cb -> simple effect
-            getter = () => {
-                if (instance && instance.isUnmounted) {
-                    return;
-                }
-                if (cleanup) {
-                    cleanup();
-                }
-                return callWithErrorHandling(source, instance, 3 /* WATCH_CALLBACK */, [onInvalidate]);
-            };
+        return cloned;
+    }
+    // class component normalization.
+    if (isClassComponent(type)) {
+        type = type.__vccOpts;
+    }
+    // class & style normalization.
+    if (props) {
+        // for reactive or proxy objects, we need to clone it to enable mutation.
+        if (isProxy(props) || InternalObjectKey in props) {
+            props = extend({}, props);
         }
+        let { class: klass, style } = props;
+        if (klass && !isString(klass)) {
+            props.class = normalizeClass(klass);
+        }
+        if (isObject(style)) {
+            // reactive state objects need to be cloned since they are likely to be
+            // mutated
+            if (isProxy(style) && !isArray(style)) {
+                style = extend({}, style);
+            }
+            props.style = normalizeStyle(style);
+        }
+    }
+    // encode the vnode type information into a bitmap
+    const shapeFlag = isString(type)
+        ? 1 /* ELEMENT */
+        :  isSuspense(type)
+            ? 128 /* SUSPENSE */
+            : isTeleport(type)
+                ? 64 /* TELEPORT */
+                : isObject(type)
+                    ? 4 /* STATEFUL_COMPONENT */
+                    : isFunction(type)
+                        ? 2 /* FUNCTIONAL_COMPONENT */
+                        : 0;
+    const vnode = {
+        __v_isVNode: true,
+        ["__v_skip" /* SKIP */]: true,
+        type,
+        props,
+        key: props && normalizeKey(props),
+        ref: props && normalizeRef(props),
+        scopeId: currentScopeId,
+        children: null,
+        component: null,
+        suspense: null,
+        ssContent: null,
+        ssFallback: null,
+        dirs: null,
+        transition: null,
+        el: null,
+        anchor: null,
+        target: null,
+        targetAnchor: null,
+        staticCount: 0,
+        shapeFlag,
+        patchFlag,
+        dynamicProps,
+        dynamicChildren: null,
+        appContext: null
+    };
+    normalizeChildren(vnode, children);
+    // normalize suspense children
+    if ( shapeFlag & 128 /* SUSPENSE */) {
+        const { content, fallback } = normalizeSuspenseChildren(vnode);
+        vnode.ssContent = content;
+        vnode.ssFallback = fallback;
+    }
+    if (
+        // avoid a block node from tracking itself
+        !isBlockNode &&
+        // has current parent block
+        currentBlock &&
+        // presence of a patch flag indicates this node needs patching on updates.
+        // component nodes also should always be patched, because even if the
+        // component doesn't need to update, it needs to persist the instance on to
+        // the next vnode so that it can be properly unmounted later.
+        (patchFlag > 0 || shapeFlag & 6 /* COMPONENT */) &&
+        // the EVENTS flag is only for hydration and if it is the only flag, the
+        // vnode should not be considered dynamic due to handler caching.
+        patchFlag !== 32 /* HYDRATE_EVENTS */) {
+        currentBlock.push(vnode);
+    }
+    return vnode;
+}
+function cloneVNode(vnode, extraProps, mergeRef = false) {
+    // This is intentionally NOT using spread or extend to avoid the runtime
+    // key enumeration cost.
+    const { props, ref, patchFlag } = vnode;
+    const mergedProps = extraProps ? mergeProps(props || {}, extraProps) : props;
+    return {
+        __v_isVNode: true,
+        ["__v_skip" /* SKIP */]: true,
+        type: vnode.type,
+        props: mergedProps,
+        key: mergedProps && normalizeKey(mergedProps),
+        ref: extraProps && extraProps.ref
+            ? // #2078 in the case of <component :is="vnode" ref="extra"/>
+                // if the vnode itself already has a ref, cloneVNode will need to merge
+                // the refs so the single vnode can be set on multiple refs
+                mergeRef && ref
+                    ? isArray(ref)
+                        ? ref.concat(normalizeRef(extraProps))
+                        : [ref, normalizeRef(extraProps)]
+                    : normalizeRef(extraProps)
+            : ref,
+        scopeId: vnode.scopeId,
+        children: vnode.children,
+        target: vnode.target,
+        targetAnchor: vnode.targetAnchor,
+        staticCount: vnode.staticCount,
+        shapeFlag: vnode.shapeFlag,
+        // if the vnode is cloned with extra props, we can no longer assume its
+        // existing patch flag to be reliable and need to add the FULL_PROPS flag.
+        // note: perserve flag for fragments since they use the flag for children
+        // fast paths only.
+        patchFlag: extraProps && vnode.type !== Fragment
+            ? patchFlag === -1 // hoisted node
+                ? 16 /* FULL_PROPS */
+                : patchFlag | 16 /* FULL_PROPS */
+            : patchFlag,
+        dynamicProps: vnode.dynamicProps,
+        dynamicChildren: vnode.dynamicChildren,
+        appContext: vnode.appContext,
+        dirs: vnode.dirs,
+        transition: vnode.transition,
+        // These should technically only be non-null on mounted VNodes. However,
+        // they *should* be copied for kept-alive vnodes. So we just always copy
+        // them since them being non-null during a mount doesn't affect the logic as
+        // they will simply be overwritten.
+        component: vnode.component,
+        suspense: vnode.suspense,
+        ssContent: vnode.ssContent && cloneVNode(vnode.ssContent),
+        ssFallback: vnode.ssFallback && cloneVNode(vnode.ssFallback),
+        el: vnode.el,
+        anchor: vnode.anchor
+    };
+}
+/**
+ * @private
+ */
+function createTextVNode(text = ' ', flag = 0) {
+    return createVNode(Text, null, text, flag);
+}
+function normalizeVNode(child) {
+    if (child == null || typeof child === 'boolean') {
+        // empty placeholder
+        return createVNode(Comment);
+    }
+    else if (isArray(child)) {
+        // fragment
+        return createVNode(Fragment, null, child);
+    }
+    else if (typeof child === 'object') {
+        // already vnode, this should be the most common since compiled templates
+        // always produce all-vnode children arrays
+        return child.el === null ? child : cloneVNode(child);
     }
     else {
-        getter = NOOP;
+        // strings and numbers
+        return createVNode(Text, null, String(child));
     }
-    if (cb && deep) {
-        const baseGetter = getter;
-        getter = () => traverse(baseGetter());
+}
+// optimized normalization for template-compiled render fns
+function cloneIfMounted(child) {
+    return child.el === null ? child : cloneVNode(child);
+}
+function normalizeChildren(vnode, children) {
+    let type = 0;
+    const { shapeFlag } = vnode;
+    if (children == null) {
+        children = null;
     }
-    let cleanup;
-    const onInvalidate = (fn) => {
-        cleanup = runner.options.onStop = () => {
-            callWithErrorHandling(fn, instance, 4 /* WATCH_CLEANUP */);
-        };
-    };
-    let oldValue = isArray(source) ? [] : INITIAL_WATCHER_VALUE;
-    const job = () => {
-        if (!runner.active) {
+    else if (isArray(children)) {
+        type = 16 /* ARRAY_CHILDREN */;
+    }
+    else if (typeof children === 'object') {
+        if (shapeFlag & 1 /* ELEMENT */ || shapeFlag & 64 /* TELEPORT */) {
+            // Normalize slot to plain children for plain element and Teleport
+            const slot = children.default;
+            if (slot) {
+                // _c marker is added by withCtx() indicating this is a compiled slot
+                slot._c && setCompiledSlotRendering(1);
+                normalizeChildren(vnode, slot());
+                slot._c && setCompiledSlotRendering(-1);
+            }
             return;
         }
-        if (cb) {
-            // watch(source, cb)
-            const newValue = runner();
-            if (deep || isRefSource || hasChanged(newValue, oldValue)) {
-                // cleanup before running cb again
-                if (cleanup) {
-                    cleanup();
+        else {
+            type = 32 /* SLOTS_CHILDREN */;
+            const slotFlag = children._;
+            if (!slotFlag && !(InternalObjectKey in children)) {
+                children._ctx = currentRenderingInstance;
+            }
+            else if (slotFlag === 3 /* FORWARDED */ && currentRenderingInstance) {
+                // a child component receives forwarded slots from the parent.
+                // its slot type is determined by its parent's slot type.
+                if (currentRenderingInstance.vnode.patchFlag & 1024 /* DYNAMIC_SLOTS */) {
+                    children._ = 2 /* DYNAMIC */;
+                    vnode.patchFlag |= 1024 /* DYNAMIC_SLOTS */;
                 }
-                callWithAsyncErrorHandling(cb, instance, 3 /* WATCH_CALLBACK */, [
-                    newValue,
-                    // pass undefined as the old value when it's changed for the first time
-                    oldValue === INITIAL_WATCHER_VALUE ? undefined : oldValue,
-                    onInvalidate
-                ]);
-                oldValue = newValue;
+                else {
+                    children._ = 1 /* STABLE */;
+                }
             }
+        }
+    }
+    else if (isFunction(children)) {
+        children = { default: children, _ctx: currentRenderingInstance };
+        type = 32 /* SLOTS_CHILDREN */;
+    }
+    else {
+        children = String(children);
+        // force teleport children to array so it can be moved around
+        if (shapeFlag & 64 /* TELEPORT */) {
+            type = 16 /* ARRAY_CHILDREN */;
+            children = [createTextVNode(children)];
         }
         else {
-            // watchEffect
-            runner();
-        }
-    };
-    // important: mark the job as a watcher callback so that scheduler knows it
-    // it is allowed to self-trigger (#1727)
-    job.allowRecurse = !!cb;
-    let scheduler;
-    if (flush === 'sync') {
-        scheduler = job;
-    }
-    else if (flush === 'pre') {
-        // ensure it's queued before component updates (which have positive ids)
-        job.id = -1;
-        scheduler = () => {
-            if (!instance || instance.isMounted) {
-                queuePreFlushCb(job);
-            }
-            else {
-                // with 'pre' option, the first call must happen before
-                // the component is mounted so it is called synchronously.
-                job();
-            }
-        };
-    }
-    else {
-        scheduler = () => queuePostRenderEffect(job, instance && instance.suspense);
-    }
-    const runner = effect(getter, {
-        lazy: true,
-        onTrack,
-        onTrigger,
-        scheduler
-    });
-    recordInstanceBoundEffect(runner);
-    // initial run
-    if (cb) {
-        if (immediate) {
-            job();
-        }
-        else {
-            oldValue = runner();
+            type = 8 /* TEXT_CHILDREN */;
         }
     }
-    else {
-        runner();
-    }
-    return () => {
-        stop(runner);
-        if (instance) {
-            remove(instance.effects, runner);
-        }
-    };
+    vnode.children = children;
+    vnode.shapeFlag |= type;
 }
-// this.$watch
-function instanceWatch(source, cb, options) {
-    const publicThis = this.proxy;
-    const getter = isString(source)
-        ? () => publicThis[source]
-        : source.bind(publicThis);
-    return doWatch(getter, cb.bind(publicThis), options, this);
-}
-function traverse(value, seen = new Set()) {
-    if (!isObject(value) || seen.has(value)) {
-        return value;
-    }
-    seen.add(value);
-    if (isRef(value)) {
-        traverse(value.value, seen);
-    }
-    else if (isArray(value)) {
-        for (let i = 0; i < value.length; i++) {
-            traverse(value[i], seen);
+function mergeProps(...args) {
+    const ret = extend({}, args[0]);
+    for (let i = 1; i < args.length; i++) {
+        const toMerge = args[i];
+        for (const key in toMerge) {
+            if (key === 'class') {
+                if (ret.class !== toMerge.class) {
+                    ret.class = normalizeClass([ret.class, toMerge.class]);
+                }
+            }
+            else if (key === 'style') {
+                ret.style = normalizeStyle([ret.style, toMerge.style]);
+            }
+            else if (isOn(key)) {
+                const existing = ret[key];
+                const incoming = toMerge[key];
+                if (existing !== incoming) {
+                    ret[key] = existing
+                        ? [].concat(existing, toMerge[key])
+                        : incoming;
+                }
+            }
+            else if (key !== '') {
+                ret[key] = toMerge[key];
+            }
         }
     }
-    else if (value instanceof Map) {
-        value.forEach((v, key) => {
-            // to register mutation dep for existing keys
-            traverse(value.get(key), seen);
-        });
-    }
-    else if (value instanceof Set) {
-        value.forEach(v => {
-            traverse(v, seen);
-        });
-    }
-    else {
-        for (const key in value) {
-            traverse(value[key], seen);
-        }
-    }
-    return value;
+    return ret;
 }
 
 function provide(key, value) {
@@ -3897,24 +4096,31 @@ function provide(key, value) {
         provides[key] = value;
     }
 }
-function inject(key, defaultValue) {
+function inject(key, defaultValue, treatDefaultAsFactory = false) {
     // fallback to `currentRenderingInstance` so that this can be called in
     // a functional component
     const instance = currentInstance || currentRenderingInstance;
     if (instance) {
-        const provides = instance.provides;
-        if (key in provides) {
+        // #2400
+        // to support `app.use` plugins,
+        // fallback to appContext's `provides` if the intance is at root
+        const provides = instance.parent == null
+            ? instance.vnode.appContext && instance.vnode.appContext.provides
+            : instance.parent.provides;
+        if (provides && key in provides) {
             // TS doesn't allow symbol as index type
             return provides[key];
         }
         else if (arguments.length > 1) {
-            return defaultValue;
+            return treatDefaultAsFactory && isFunction(defaultValue)
+                ? defaultValue()
+                : defaultValue;
         }
         else ;
     }
 }
 let isInBeforeCreate = false;
-function applyOptions(instance, options, deferredData = [], deferredWatch = [], asMixin = false) {
+function applyOptions(instance, options, deferredData = [], deferredWatch = [], deferredProvide = [], asMixin = false) {
     const { 
     // composition
     mixins, extends: extendsOptions, 
@@ -3923,7 +4129,9 @@ function applyOptions(instance, options, deferredData = [], deferredWatch = [], 
     // assets
     components, directives, 
     // lifecycle
-    beforeMount, mounted, beforeUpdate, updated, activated, deactivated, beforeUnmount, unmounted, render, renderTracked, renderTriggered, errorCaptured } = options;
+    beforeMount, mounted, beforeUpdate, updated, activated, deactivated, beforeDestroy, beforeUnmount, destroyed, unmounted, render, renderTracked, renderTriggered, errorCaptured, 
+    // public API
+    expose } = options;
     const publicThis = instance.proxy;
     const ctx = instance.ctx;
     const globalMixins = instance.appContext.mixins;
@@ -3933,18 +4141,18 @@ function applyOptions(instance, options, deferredData = [], deferredWatch = [], 
     // applyOptions is called non-as-mixin once per instance
     if (!asMixin) {
         isInBeforeCreate = true;
-        callSyncHook('beforeCreate', options, publicThis, globalMixins);
+        callSyncHook('beforeCreate', "bc" /* BEFORE_CREATE */, options, instance, globalMixins);
         isInBeforeCreate = false;
         // global mixins are applied first
-        applyMixins(instance, globalMixins, deferredData, deferredWatch);
+        applyMixins(instance, globalMixins, deferredData, deferredWatch, deferredProvide);
     }
     // extending a base component...
     if (extendsOptions) {
-        applyOptions(instance, extendsOptions, deferredData, deferredWatch, true);
+        applyOptions(instance, extendsOptions, deferredData, deferredWatch, deferredProvide, true);
     }
     // local mixins
     if (mixins) {
-        applyMixins(instance, mixins, deferredData, deferredWatch);
+        applyMixins(instance, mixins, deferredData, deferredWatch, deferredProvide);
     }
     // options initialization order (to be consistent with Vue 2):
     // - props (already done outside of this function)
@@ -3964,7 +4172,7 @@ function applyOptions(instance, options, deferredData = [], deferredWatch = [], 
             for (const key in injectOptions) {
                 const opt = injectOptions[key];
                 if (isObject(opt)) {
-                    ctx[key] = inject(opt.from, opt.default);
+                    ctx[key] = inject(opt.from || key, opt.default, true /* treat default function as factory */);
                 }
                 else {
                     ctx[key] = inject(opt);
@@ -4025,12 +4233,17 @@ function applyOptions(instance, options, deferredData = [], deferredWatch = [], 
         });
     }
     if (provideOptions) {
-        const provides = isFunction(provideOptions)
-            ? provideOptions.call(publicThis)
-            : provideOptions;
-        for (const key in provides) {
-            provide(key, provides[key]);
-        }
+        deferredProvide.push(provideOptions);
+    }
+    if (!asMixin && deferredProvide.length) {
+        deferredProvide.forEach(provideOptions => {
+            const provides = isFunction(provideOptions)
+                ? provideOptions.call(publicThis)
+                : provideOptions;
+            Reflect.ownKeys(provides).forEach(key => {
+                provide(key, provides[key]);
+            });
+        });
     }
     // asset options.
     // To reduce memory usage, only components with mixins or extends will have
@@ -4047,7 +4260,7 @@ function applyOptions(instance, options, deferredData = [], deferredWatch = [], 
     }
     // lifecycle options
     if (!asMixin) {
-        callSyncHook('created', options, publicThis, globalMixins);
+        callSyncHook('created', "c" /* CREATED */, options, instance, globalMixins);
     }
     if (beforeMount) {
         onBeforeMount(beforeMount.bind(publicThis));
@@ -4082,45 +4295,58 @@ function applyOptions(instance, options, deferredData = [], deferredWatch = [], 
     if (unmounted) {
         onUnmounted(unmounted.bind(publicThis));
     }
+    if (isArray(expose)) {
+        if (!asMixin) {
+            if (expose.length) {
+                const exposed = instance.exposed || (instance.exposed = proxyRefs({}));
+                expose.forEach(key => {
+                    exposed[key] = toRef(publicThis, key);
+                });
+            }
+            else if (!instance.exposed) {
+                instance.exposed = EMPTY_OBJ;
+            }
+        }
+    }
 }
-function callSyncHook(name, options, ctx, globalMixins) {
-    callHookFromMixins(name, globalMixins, ctx);
+function callSyncHook(name, type, options, instance, globalMixins) {
+    callHookFromMixins(name, type, globalMixins, instance);
     const { extends: base, mixins } = options;
     if (base) {
-        callHookFromExtends(name, base, ctx);
+        callHookFromExtends(name, type, base, instance);
     }
     if (mixins) {
-        callHookFromMixins(name, mixins, ctx);
+        callHookFromMixins(name, type, mixins, instance);
     }
     const selfHook = options[name];
     if (selfHook) {
-        selfHook.call(ctx);
+        callWithAsyncErrorHandling(selfHook.bind(instance.proxy), instance, type);
     }
 }
-function callHookFromExtends(name, base, ctx) {
+function callHookFromExtends(name, type, base, instance) {
     if (base.extends) {
-        callHookFromExtends(name, base.extends, ctx);
+        callHookFromExtends(name, type, base.extends, instance);
     }
     const baseHook = base[name];
     if (baseHook) {
-        baseHook.call(ctx);
+        callWithAsyncErrorHandling(baseHook.bind(instance.proxy), instance, type);
     }
 }
-function callHookFromMixins(name, mixins, ctx) {
+function callHookFromMixins(name, type, mixins, instance) {
     for (let i = 0; i < mixins.length; i++) {
         const chainedMixins = mixins[i].mixins;
         if (chainedMixins) {
-            callHookFromMixins(name, chainedMixins, ctx);
+            callHookFromMixins(name, type, chainedMixins, instance);
         }
         const fn = mixins[i][name];
         if (fn) {
-            fn.call(ctx);
+            callWithAsyncErrorHandling(fn.bind(instance.proxy), instance, type);
         }
     }
 }
-function applyMixins(instance, mixins, deferredData, deferredWatch) {
+function applyMixins(instance, mixins, deferredData, deferredWatch, deferredProvide) {
     for (let i = 0; i < mixins.length; i++) {
-        applyOptions(instance, mixins[i], deferredData, deferredWatch, true);
+        applyOptions(instance, mixins[i], deferredData, deferredWatch, deferredProvide, true);
     }
 }
 function resolveData(instance, dataFn, publicThis) {
@@ -4135,7 +4361,9 @@ function resolveData(instance, dataFn, publicThis) {
     }
 }
 function createWatcher(raw, ctx, publicThis, key) {
-    const getter = () => publicThis[key];
+    const getter = key.includes('.')
+        ? createPathGetter(publicThis, key)
+        : () => publicThis[key];
     if (isString(raw)) {
         const handler = ctx[raw];
         if (isFunction(handler)) {
@@ -4160,6 +4388,16 @@ function createWatcher(raw, ctx, publicThis, key) {
     }
     else ;
 }
+function createPathGetter(ctx, path) {
+    const segments = path.split('.');
+    return () => {
+        let cur = ctx;
+        for (let i = 0; i < segments.length && cur; i++) {
+            cur = cur[segments[i]];
+        }
+        return cur;
+    };
+}
 function resolveMergedOptions(instance) {
     const raw = instance.type;
     const { __merged, mixins, extends: extendsOptions } = raw;
@@ -4169,26 +4407,32 @@ function resolveMergedOptions(instance) {
     if (!globalMixins.length && !mixins && !extendsOptions)
         return raw;
     const options = {};
-    mergeOptions(options, raw, instance);
     globalMixins.forEach(m => mergeOptions(options, m, instance));
+    mergeOptions(options, raw, instance);
     return (raw.__merged = options);
 }
 function mergeOptions(to, from, instance) {
     const strats = instance.appContext.config.optionMergeStrategies;
-    for (const key in from) {
-        if (strats && hasOwn(strats, key)) {
-            to[key] = strats[key](to[key], from[key], instance.proxy, key);
-        }
-        else if (!hasOwn(to, key)) {
-            to[key] = from[key];
-        }
-    }
     const { mixins, extends: extendsOptions } = from;
     extendsOptions && mergeOptions(to, extendsOptions, instance);
     mixins &&
         mixins.forEach((m) => mergeOptions(to, m, instance));
+    for (const key in from) {
+        if (strats && hasOwn(strats, key)) {
+            to[key] = strats[key](to[key], from[key], instance.proxy, key);
+        }
+        else {
+            to[key] = from[key];
+        }
+    }
 }
 
+/**
+ * #2437 In Vue 3, functional components do not have a public instance proxy but
+ * they exist in the internal parent chain. For code that relies on traversing
+ * public $parent chains, skip functional ones and go to the parent instead.
+ */
+const getPublicInstance = (i) => i && (i.proxy ? i.proxy : getPublicInstance(i.parent));
 const publicPropertiesMap = extend(Object.create(null), {
     $: i => i,
     $el: i => i.vnode.el,
@@ -4197,12 +4441,12 @@ const publicPropertiesMap = extend(Object.create(null), {
     $attrs: i => ( i.attrs),
     $slots: i => ( i.slots),
     $refs: i => ( i.refs),
-    $parent: i => i.parent && i.parent.proxy,
+    $parent: i => getPublicInstance(i.parent),
     $root: i => i.root && i.root.proxy,
     $emit: i => i.emit,
     $options: i => (__VUE_OPTIONS_API__ ? resolveMergedOptions(i) : i.type),
     $forceUpdate: i => () => queueJob(i.update),
-    $nextTick: () => nextTick,
+    $nextTick: i => nextTick.bind(i.proxy),
     $watch: i => (__VUE_OPTIONS_API__ ? instanceWatch.bind(i) : NOOP)
 });
 const PublicInstanceProxyHandlers = {
@@ -4350,6 +4594,7 @@ function createComponentInstance(vnode, parent, suspense) {
         update: null,
         render: null,
         proxy: null,
+        exposed: null,
         withProxy: null,
         effects: null,
         provides: parent ? parent.provides : Object.create(appContext.provides),
@@ -4375,6 +4620,7 @@ function createComponentInstance(vnode, parent, suspense) {
         setupContext: null,
         // suspense related
         suspense,
+        suspenseId: suspense ? suspense.pendingId : 0,
         asyncDep: null,
         asyncResolved: false,
         // lifecycle hooks
@@ -4425,7 +4671,7 @@ function setupComponent(instance, isSSR = false) {
 function setupStatefulComponent(instance, isSSR) {
     const Component = instance.type;
     // 0. create render proxy property access cache
-    instance.accessCache = {};
+    instance.accessCache = Object.create(null);
     // 1. create public instance / render proxy
     // also mark it raw so it's never observed
     instance.proxy = new Proxy(instance.ctx, PublicInstanceProxyHandlers);
@@ -4463,7 +4709,9 @@ function setupStatefulComponent(instance, isSSR) {
 function handleSetupResult(instance, setupResult, isSSR) {
     if (isFunction(setupResult)) {
         // setup returned an inline render function
-        instance.render = setupResult;
+        {
+            instance.render = setupResult;
+        }
     }
     else if (isObject(setupResult)) {
         // setup returned bindings.
@@ -4491,24 +4739,30 @@ function finishComponentSetup(instance, isSSR) {
     // support for 2.x options
     if (__VUE_OPTIONS_API__) {
         currentInstance = instance;
+        pauseTracking();
         applyOptions(instance, Component);
+        resetTracking();
         currentInstance = null;
     }
 }
 function createSetupContext(instance) {
+    const expose = exposed => {
+        instance.exposed = proxyRefs(exposed);
+    };
     {
         return {
             attrs: instance.attrs,
             slots: instance.slots,
-            emit: instance.emit
+            emit: instance.emit,
+            expose
         };
     }
 }
 // record effects created during a component's setup() so that they can be
 // stopped when the component unmounts
-function recordInstanceBoundEffect(effect) {
-    if (currentInstance) {
-        (currentInstance.effects || (currentInstance.effects = [])).push(effect);
+function recordInstanceBoundEffect(effect, instance = currentInstance) {
+    if (instance) {
+        (instance.effects || (instance.effects = [])).push(effect);
     }
 }
 const classifyRE = /(?:^|[-_])(\w)/g;
@@ -4519,7 +4773,7 @@ function formatComponentName(instance, Component, isRoot = false) {
         ? Component.displayName || Component.name
         : Component.name;
     if (!name && Component.__file) {
-        const match = Component.__file.match(/([^/\\]+)\.vue$/);
+        const match = Component.__file.match(/([^/\\]+)\.\w+$/);
         if (match) {
             name = match[1];
         }
@@ -4538,6 +4792,9 @@ function formatComponentName(instance, Component, isRoot = false) {
                 instance.parent.type.components) || inferFromRegistry(instance.appContext.components);
     }
     return name ? classify(name) : isRoot ? `App` : `Anonymous`;
+}
+function isClassComponent(value) {
+    return isFunction(value) && '__vccOpts' in value;
 }
 
 function computed$1(getterOrOptions) {
@@ -4575,7 +4832,7 @@ function h(type, propsOrChildren, children) {
 }
 
 // Core API ------------------------------------------------------------------
-const version = "3.0.0-rc.10";
+const version = "3.0.4";
 
 const svgNS = 'http://www.w3.org/2000/svg';
 const doc = (typeof document !== 'undefined' ? document : null);
@@ -4769,22 +5026,31 @@ prevChildren, parentComponent, parentSuspense, unmountChildren) {
         }
         return;
     }
-    if (value === '' && typeof el[key] === 'boolean') {
-        // e.g. <select multiple> compiles to { multiple: '' }
-        el[key] = true;
-    }
-    else if (value == null && typeof el[key] === 'string') {
-        // e.g. <div :id="null">
-        el[key] = '';
-        el.removeAttribute(key);
-    }
-    else {
-        // some properties perform value validation and throw
-        try {
-            el[key] = value;
+    if (value === '' || value == null) {
+        const type = typeof el[key];
+        if (value === '' && type === 'boolean') {
+            // e.g. <select multiple> compiles to { multiple: '' }
+            el[key] = true;
+            return;
         }
-        catch (e) {
+        else if (value == null && type === 'string') {
+            // e.g. <div :id="null">
+            el[key] = '';
+            el.removeAttribute(key);
+            return;
         }
+        else if (type === 'number') {
+            // e.g. <img :width="null">
+            el[key] = 0;
+            el.removeAttribute(key);
+            return;
+        }
+    }
+    // some properties perform value validation and throw
+    try {
+        el[key] = value;
+    }
+    catch (e) {
     }
 }
 
@@ -4961,12 +5227,17 @@ const getModelAssigner = (vnode) => {
     return isArray(fn) ? value => invokeArrayFns(fn, value) : fn;
 };
 const vModelSelect = {
-    created(el, binding, vnode) {
+    created(el, { value, modifiers: { number } }, vnode) {
+        const isSetModel = isSet(value);
         addEventListener(el, 'change', () => {
             const selectedVal = Array.prototype.filter
                 .call(el.options, (o) => o.selected)
-                .map(getValue);
-            el._assign(el.multiple ? selectedVal : selectedVal[0]);
+                .map((o) => number ? toNumber(getValue(o)) : getValue(o));
+            el._assign(el.multiple
+                ? isSetModel
+                    ? new Set(selectedVal)
+                    : selectedVal
+                : selectedVal[0]);
         });
         el._assign = getModelAssigner(vnode);
     },
@@ -4984,14 +5255,19 @@ const vModelSelect = {
 };
 function setSelected(el, value) {
     const isMultiple = el.multiple;
-    if (isMultiple && !isArray(value)) {
+    if (isMultiple && !isArray(value) && !isSet(value)) {
         return;
     }
     for (let i = 0, l = el.options.length; i < l; i++) {
         const option = el.options[i];
         const optionValue = getValue(option);
         if (isMultiple) {
-            option.selected = looseIndexOf(value, optionValue) > -1;
+            if (isArray(value)) {
+                option.selected = looseIndexOf(value, optionValue) > -1;
+            }
+            else {
+                option.selected = value.has(optionValue);
+            }
         }
         else {
             if (looseEqual(getValue(option), value)) {
@@ -5045,11 +5321,16 @@ function normalizeContainer(container) {
 }
 
 /*!
-  * vue-i18n v9.0.0-beta.1
+  * vue-i18n v9.0.0-beta.10
   * (c) 2020 kazuya kawaguchi
   * Released under the MIT License.
   */
+const hasSymbol = typeof Symbol === 'function' && typeof Symbol.toStringTag === 'symbol';
+/** @internal */
+const makeSymbol = (name) => hasSymbol ? Symbol(name) : name;
+/** @internal */
 const generateFormatCacheKey = (locale, key, source) => friendlyJSONstringify({ l: locale, k: key, s: source });
+/** @internal */
 const friendlyJSONstringify = (json) => JSON.stringify(json)
     .replace(/\u2028/g, '\\u2028')
     .replace(/\u2029/g, '\\u2029')
@@ -5061,6 +5342,7 @@ const isEmptyObject = (val) => isPlainObject$1(val) && Object.keys(val).length =
 function warn$1(msg, err) {
     if (typeof console !== 'undefined') {
         console.warn('[vue-i18n] ' + msg);
+        /* istanbul ignore if */
         if (err) {
             console.warn(err.stack);
         }
@@ -5068,6 +5350,7 @@ function warn$1(msg, err) {
 }
 let _globalThis$1;
 const getGlobalThis$1 = () => {
+    // prettier-ignore
     return (_globalThis$1 ||
         (_globalThis$1 =
             typeof globalThis !== 'undefined'
@@ -5080,14 +5363,31 @@ const getGlobalThis$1 = () => {
                             ? global
                             : {}));
 };
+function escapeHtml(rawText) {
+    return rawText
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
+}
+/* eslint-enable */
+/**
+ * Useful Utilites By Evan you
+ * Modified by kazuya kawaguchi
+ * MIT License
+ * https://github.com/vuejs/vue-next/blob/master/packages/shared/src/index.ts
+ * https://github.com/vuejs/vue-next/blob/master/packages/shared/src/codeframe.ts
+ */
 const isArray$1 = Array.isArray;
 const isFunction$1 = (val) => typeof val === 'function';
 const isString$1 = (val) => typeof val === 'string';
 const isBoolean = (val) => typeof val === 'boolean';
-const isObject$1 = (val) => val !== null && typeof val === 'object';
+const isObject$1 = (val) => // eslint-disable-line
+ val !== null && typeof val === 'object';
 const objectToString$1 = Object.prototype.toString;
 const toTypeString$1 = (value) => objectToString$1.call(value);
 const isPlainObject$1 = (val) => toTypeString$1(val) === '[object Object]';
+// for converting list and named values to displayed strings.
 const toDisplayString$1 = (val) => {
     return val == null
         ? ''
@@ -5095,7 +5395,395 @@ const toDisplayString$1 = (val) => {
             ? JSON.stringify(val, null, 2)
             : String(val);
 };
+
+var commonjsGlobal = typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : typeof global !== 'undefined' ? global : typeof self !== 'undefined' ? self : {};
+
+function createCommonjsModule(fn, basedir, module) {
+	return module = {
+		path: basedir,
+		exports: {},
+		require: function (path, base) {
+			return commonjsRequire(path, (base === undefined || base === null) ? module.path : base);
+		}
+	}, fn(module, module.exports), module.exports;
+}
+
+function commonjsRequire () {
+	throw new Error('Dynamic requires are not currently supported by @rollup/plugin-commonjs');
+}
+
+var env = createCommonjsModule(function (module, exports) {
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.hook = exports.target = exports.isBrowser = void 0;
+exports.isBrowser = typeof navigator !== 'undefined';
+exports.target = exports.isBrowser
+    ? window
+    : typeof commonjsGlobal !== 'undefined'
+        ? commonjsGlobal
+        : {};
+exports.hook = exports.target.__VUE_DEVTOOLS_GLOBAL_HOOK__;
+
+});
+
+var _const = createCommonjsModule(function (module, exports) {
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.ApiHookEvents = void 0;
+var ApiHookEvents;
+(function (ApiHookEvents) {
+    ApiHookEvents["SETUP_DEVTOOLS_PLUGIN"] = "devtools-plugin:setup";
+})(ApiHookEvents = exports.ApiHookEvents || (exports.ApiHookEvents = {}));
+
+});
+
+var api = createCommonjsModule(function (module, exports) {
+Object.defineProperty(exports, "__esModule", { value: true });
+
+});
+
+var app = createCommonjsModule(function (module, exports) {
+Object.defineProperty(exports, "__esModule", { value: true });
+
+});
+
+var component = createCommonjsModule(function (module, exports) {
+Object.defineProperty(exports, "__esModule", { value: true });
+
+});
+
+var context = createCommonjsModule(function (module, exports) {
+Object.defineProperty(exports, "__esModule", { value: true });
+
+});
+
+var hooks = createCommonjsModule(function (module, exports) {
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.Hooks = void 0;
+var Hooks;
+(function (Hooks) {
+    Hooks["TRANSFORM_CALL"] = "transformCall";
+    Hooks["GET_APP_RECORD_NAME"] = "getAppRecordName";
+    Hooks["GET_APP_ROOT_INSTANCE"] = "getAppRootInstance";
+    Hooks["REGISTER_APPLICATION"] = "registerApplication";
+    Hooks["WALK_COMPONENT_TREE"] = "walkComponentTree";
+    Hooks["WALK_COMPONENT_PARENTS"] = "walkComponentParents";
+    Hooks["INSPECT_COMPONENT"] = "inspectComponent";
+    Hooks["GET_COMPONENT_BOUNDS"] = "getComponentBounds";
+    Hooks["GET_COMPONENT_NAME"] = "getComponentName";
+    Hooks["GET_ELEMENT_COMPONENT"] = "getElementComponent";
+    Hooks["GET_INSPECTOR_TREE"] = "getInspectorTree";
+    Hooks["GET_INSPECTOR_STATE"] = "getInspectorState";
+})(Hooks = exports.Hooks || (exports.Hooks = {}));
+
+});
+
+var api$1 = createCommonjsModule(function (module, exports) {
+var __createBinding = (commonjsGlobal && commonjsGlobal.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    Object.defineProperty(o, k2, { enumerable: true, get: function() { return m[k]; } });
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __exportStar = (commonjsGlobal && commonjsGlobal.__exportStar) || function(m, exports) {
+    for (var p in m) if (p !== "default" && !exports.hasOwnProperty(p)) __createBinding(exports, m, p);
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+__exportStar(api, exports);
+__exportStar(app, exports);
+__exportStar(component, exports);
+__exportStar(context, exports);
+__exportStar(hooks, exports);
+
+});
+
+var lib = createCommonjsModule(function (module, exports) {
+var __createBinding = (commonjsGlobal && commonjsGlobal.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    Object.defineProperty(o, k2, { enumerable: true, get: function() { return m[k]; } });
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __exportStar = (commonjsGlobal && commonjsGlobal.__exportStar) || function(m, exports) {
+    for (var p in m) if (p !== "default" && !exports.hasOwnProperty(p)) __createBinding(exports, m, p);
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.setupDevtoolsPlugin = void 0;
+
+
+__exportStar(api$1, exports);
+function setupDevtoolsPlugin(pluginDescriptor, setupFn) {
+    if (env.hook) {
+        env.hook.emit(_const.ApiHookEvents.SETUP_DEVTOOLS_PLUGIN, pluginDescriptor, setupFn);
+    }
+    else {
+        const list = env.target.__VUE_DEVTOOLS_PLUGINS__ = env.target.__VUE_DEVTOOLS_PLUGINS__ || [];
+        list.push({
+            pluginDescriptor,
+            setupFn
+        });
+    }
+}
+exports.setupDevtoolsPlugin = setupDevtoolsPlugin;
+
+});
+
+const DevToolsLabels = {
+    ["vue-devtools-plugin-vue-i18n" /* PLUGIN */]: 'Vue I18n devtools',
+    ["vue-i18n-resource-inspector" /* CUSTOM_INSPECTOR */]: 'I18n Resources',
+    ["vue-i18n-compile-error" /* TIMELINE_COMPILE_ERROR */]: 'Vue I18n: Compile Errors',
+    ["vue-i18n-missing" /* TIMELINE_MISSING */]: 'Vue I18n: Missing',
+    ["vue-i18n-fallback" /* TIMELINE_FALLBACK */]: 'Vue I18n: Fallback',
+    ["vue-i18n-performance" /* TIMELINE_PERFORMANCE */]: 'Vue I18n: Performance'
+};
+const DevToolsPlaceholders = {
+    ["vue-i18n-resource-inspector" /* CUSTOM_INSPECTOR */]: 'Search for scopes ...'
+};
+const DevToolsTimelineColors = {
+    ["vue-i18n-compile-error" /* TIMELINE_COMPILE_ERROR */]: 0xff0000,
+    ["vue-i18n-missing" /* TIMELINE_MISSING */]: 0xffcd19,
+    ["vue-i18n-fallback" /* TIMELINE_FALLBACK */]: 0xffcd19,
+    ["vue-i18n-performance" /* TIMELINE_PERFORMANCE */]: 0xffcd19
+};
+const DevToolsTimelineLayerMaps = {
+    ["compile-error" /* COMPILE_ERROR */]: "vue-i18n-compile-error" /* TIMELINE_COMPILE_ERROR */,
+    ["missing" /* MISSING */]: "vue-i18n-missing" /* TIMELINE_MISSING */,
+    ["fallback" /* FALBACK */]: "vue-i18n-fallback" /* TIMELINE_FALLBACK */,
+    ["message-resolve" /* MESSAGE_RESOLVE */]: "vue-i18n-performance" /* TIMELINE_PERFORMANCE */,
+    ["message-compilation" /* MESSAGE_COMPILATION */]: "vue-i18n-performance" /* TIMELINE_PERFORMANCE */,
+    ["message-evaluation" /* MESSAGE_EVALUATION */]: "vue-i18n-performance" /* TIMELINE_PERFORMANCE */
+};
+let devtoolsApi;
+async function enableDevTools(app, i18n) {
+    return new Promise((resolve, reject) => {
+        try {
+            lib.setupDevtoolsPlugin({
+                id: "vue-devtools-plugin-vue-i18n" /* PLUGIN */,
+                label: DevToolsLabels["vue-devtools-plugin-vue-i18n" /* PLUGIN */],
+                app
+            }, api => {
+                devtoolsApi = api;
+                api.on.inspectComponent(payload => {
+                    const componentInstance = payload.componentInstance;
+                    if (componentInstance.vnode.el.__INTLIFY__ &&
+                        payload.instanceData) {
+                        inspectComposer(payload.instanceData, componentInstance.vnode.el.__INTLIFY__);
+                    }
+                });
+                api.addInspector({
+                    id: "vue-i18n-resource-inspector" /* CUSTOM_INSPECTOR */,
+                    label: DevToolsLabels["vue-i18n-resource-inspector" /* CUSTOM_INSPECTOR */],
+                    icon: 'language',
+                    treeFilterPlaceholder: DevToolsPlaceholders["vue-i18n-resource-inspector" /* CUSTOM_INSPECTOR */]
+                });
+                api.on.getInspectorTree(payload => {
+                    if (payload.app === app &&
+                        payload.inspectorId === "vue-i18n-resource-inspector" /* CUSTOM_INSPECTOR */) {
+                        registerScope(payload, i18n);
+                    }
+                });
+                api.on.getInspectorState(payload => {
+                    if (payload.app === app &&
+                        payload.inspectorId === "vue-i18n-resource-inspector" /* CUSTOM_INSPECTOR */) {
+                        inspectScope(payload, i18n);
+                    }
+                });
+                api.addTimelineLayer({
+                    id: "vue-i18n-compile-error" /* TIMELINE_COMPILE_ERROR */,
+                    label: DevToolsLabels["vue-i18n-compile-error" /* TIMELINE_COMPILE_ERROR */],
+                    color: DevToolsTimelineColors["vue-i18n-compile-error" /* TIMELINE_COMPILE_ERROR */]
+                });
+                api.addTimelineLayer({
+                    id: "vue-i18n-performance" /* TIMELINE_PERFORMANCE */,
+                    label: DevToolsLabels["vue-i18n-performance" /* TIMELINE_PERFORMANCE */],
+                    color: DevToolsTimelineColors["vue-i18n-performance" /* TIMELINE_PERFORMANCE */]
+                });
+                api.addTimelineLayer({
+                    id: "vue-i18n-missing" /* TIMELINE_MISSING */,
+                    label: DevToolsLabels["vue-i18n-missing" /* TIMELINE_MISSING */],
+                    color: DevToolsTimelineColors["vue-i18n-missing" /* TIMELINE_MISSING */]
+                });
+                api.addTimelineLayer({
+                    id: "vue-i18n-fallback" /* TIMELINE_FALLBACK */,
+                    label: DevToolsLabels["vue-i18n-fallback" /* TIMELINE_FALLBACK */],
+                    color: DevToolsTimelineColors["vue-i18n-fallback" /* TIMELINE_FALLBACK */]
+                });
+                resolve(true);
+            });
+        }
+        catch (e) {
+            console.error(e);
+            reject(false);
+        }
+    });
+}
+function inspectComposer(instanceData, composer) {
+    const type = 'vue-i18n: composer properties';
+    instanceData.state.push({
+        type,
+        key: 'locale',
+        editable: false,
+        value: composer.locale.value
+    });
+    instanceData.state.push({
+        type,
+        key: 'availableLocales',
+        editable: false,
+        value: composer.availableLocales
+    });
+    instanceData.state.push({
+        type,
+        key: 'fallbackLocale',
+        editable: false,
+        value: composer.fallbackLocale.value
+    });
+    instanceData.state.push({
+        type,
+        key: 'inheritLocale',
+        editable: false,
+        value: composer.inheritLocale
+    });
+    instanceData.state.push({
+        type,
+        key: 'messages',
+        editable: false,
+        value: composer.messages.value
+    });
+    instanceData.state.push({
+        type,
+        key: 'datetimeFormats',
+        editable: false,
+        value: composer.datetimeFormats.value
+    });
+    instanceData.state.push({
+        type,
+        key: 'numberFormats',
+        editable: false,
+        value: composer.numberFormats.value
+    });
+}
+function registerScope(payload, i18n) {
+    const children = [];
+    for (const [keyInstance, instance] of i18n.__instances) {
+        // prettier-ignore
+        const composer = i18n.mode === 'composition'
+            ? instance
+            : instance.__composer;
+        const label = keyInstance.type.name ||
+            keyInstance.type.displayName ||
+            keyInstance.type.__file;
+        children.push({
+            id: composer.id.toString(),
+            label: `${label} Scope`
+        });
+    }
+    payload.rootNodes.push({
+        id: 'global',
+        label: 'Global Scope',
+        children
+    });
+}
+function inspectScope(payload, i18n) {
+    if (payload.nodeId === 'global') {
+        payload.state = makeScopeInspectState(i18n.mode === 'composition'
+            ? i18n.global
+            : i18n.global.__composer);
+    }
+    else {
+        const instance = Array.from(i18n.__instances.values()).find(item => item.id.toString() === payload.nodeId);
+        if (instance) {
+            const composer = i18n.mode === 'composition'
+                ? instance
+                : instance.__composer;
+            payload.state = makeScopeInspectState(composer);
+        }
+    }
+}
+function makeScopeInspectState(composer) {
+    const state = {};
+    const localeType = 'Locale related info';
+    const localeStates = [
+        {
+            type: localeType,
+            key: 'locale',
+            editable: false,
+            value: composer.locale.value
+        },
+        {
+            type: localeType,
+            key: 'fallbackLocale',
+            editable: false,
+            value: composer.fallbackLocale.value
+        },
+        {
+            type: localeType,
+            key: 'availableLocales',
+            editable: false,
+            value: composer.availableLocales
+        },
+        {
+            type: localeType,
+            key: 'inheritLocale',
+            editable: false,
+            value: composer.inheritLocale
+        }
+    ];
+    state[localeType] = localeStates;
+    const localeMessagesType = 'Locale messages info';
+    const localeMessagesStates = [
+        {
+            type: localeMessagesType,
+            key: 'messages',
+            editable: false,
+            value: composer.messages.value
+        }
+    ];
+    state[localeMessagesType] = localeMessagesStates;
+    const datetimeFormatsType = 'Datetime formats info';
+    const datetimeFormatsStates = [
+        {
+            type: datetimeFormatsType,
+            key: 'datetimeFormats',
+            editable: false,
+            value: composer.datetimeFormats.value
+        }
+    ];
+    state[datetimeFormatsType] = datetimeFormatsStates;
+    const numberFormatsType = 'Datetime formats info';
+    const numberFormatsStates = [
+        {
+            type: numberFormatsType,
+            key: 'numberFormats',
+            editable: false,
+            value: composer.numberFormats.value
+        }
+    ];
+    state[numberFormatsType] = numberFormatsStates;
+    return state;
+}
+function addTimelineEvent(event, payload) {
+    if (devtoolsApi) {
+        devtoolsApi.addTimelineEvent({
+            layerId: DevToolsTimelineLayerMaps[event],
+            event: {
+                time: Date.now(),
+                meta: {},
+                data: payload || {}
+            }
+        });
+    }
+}
+/**
+ * This is only called in esm-bundler builds.
+ * istanbul-ignore-next
+ */
 function initFeatureFlags$1() {
+    if (typeof __VUE_I18N_FULL_INSTALL__ !== 'boolean') {
+        getGlobalThis$1().__VUE_I18N_FULL_INSTALL__ = true;
+    }
+    if (typeof __VUE_I18N_LEGACY_API__ !== 'boolean') {
+        getGlobalThis$1().__VUE_I18N_LEGACY_API__ = true;
+    }
     if (typeof __INTLIFY_PROD_DEVTOOLS__ !== 'boolean') {
         getGlobalThis$1().__INTLIFY_PROD_DEVTOOLS__ = false;
     }
@@ -5111,6 +5799,7 @@ function createLocation(start, end, source) {
     }
     return loc;
 }
+/** @internal */
 function createCompileError(code, loc, optinos = {}) {
     const { domain, messages, args } = optinos;
     const msg =  code;
@@ -5122,6 +5811,7 @@ function createCompileError(code, loc, optinos = {}) {
     error.domain = domain;
     return error;
 }
+/** @internal */
 function defaultOnError(error) {
     throw error;
 }
@@ -5180,6 +5870,7 @@ function createScanner(str) {
     }
     function skipToPeek() {
         const target = _index + _peekOffset;
+        // eslint-disable-next-line no-unmodified-loop-condition
         while (target !== _index) {
             next();
         }
@@ -5212,11 +5903,11 @@ function createTokenizer(source, options = {}) {
     const _initLoc = currentPosition();
     const _initOffset = currentOffset();
     const _context = {
-        currentType: 14,
+        currentType: 14 /* EOF */,
         offset: _initOffset,
         startLoc: _initLoc,
         endLoc: _initLoc,
-        lastType: 14,
+        lastType: 14 /* EOF */,
         lastOffset: _initOffset,
         lastStartLoc: _initLoc,
         lastEndLoc: _initLoc,
@@ -5251,14 +5942,14 @@ function createTokenizer(source, options = {}) {
         }
         return token;
     }
-    const getEndToken = (context) => getToken(context, 14);
+    const getEndToken = (context) => getToken(context, 14 /* EOF */);
     function eat(scnr, ch) {
         if (scnr.currentChar() === ch) {
             scnr.next();
             return ch;
         }
         else {
-            emitError(0, currentPosition(), 0, ch);
+            emitError(0 /* EXPECTED_TOKEN */, currentPosition(), 0, ch);
             return '';
         }
     }
@@ -5280,19 +5971,19 @@ function createTokenizer(source, options = {}) {
             return false;
         }
         const cc = ch.charCodeAt(0);
-        return ((cc >= 97 && cc <= 122) ||
-            (cc >= 65 && cc <= 90));
+        return ((cc >= 97 && cc <= 122) || // a-z
+            (cc >= 65 && cc <= 90)); // A-Z
     }
     function isNumberStart(ch) {
         if (ch === EOF) {
             return false;
         }
         const cc = ch.charCodeAt(0);
-        return cc >= 48 && cc <= 57;
+        return cc >= 48 && cc <= 57; // 0-9
     }
     function isNamedIdentifierStart(scnr, context) {
         const { currentType } = context;
-        if (currentType !== 2) {
+        if (currentType !== 2 /* BraceLeft */) {
             return false;
         }
         peekSpaces(scnr);
@@ -5302,7 +5993,7 @@ function createTokenizer(source, options = {}) {
     }
     function isListIdentifierStart(scnr, context) {
         const { currentType } = context;
-        if (currentType !== 2) {
+        if (currentType !== 2 /* BraceLeft */) {
             return false;
         }
         peekSpaces(scnr);
@@ -5313,7 +6004,7 @@ function createTokenizer(source, options = {}) {
     }
     function isLiteralStart(scnr, context) {
         const { currentType } = context;
-        if (currentType !== 2) {
+        if (currentType !== 2 /* BraceLeft */) {
             return false;
         }
         peekSpaces(scnr);
@@ -5323,17 +6014,17 @@ function createTokenizer(source, options = {}) {
     }
     function isLinkedDotStart(scnr, context) {
         const { currentType } = context;
-        if (currentType !== 8) {
+        if (currentType !== 8 /* LinkedAlias */) {
             return false;
         }
         peekSpaces(scnr);
-        const ret = scnr.currentPeek() === ".";
+        const ret = scnr.currentPeek() === "." /* LinkedDot */;
         scnr.resetPeek();
         return ret;
     }
     function isLinkedModifierStart(scnr, context) {
         const { currentType } = context;
-        if (currentType !== 9) {
+        if (currentType !== 9 /* LinkedDot */) {
             return false;
         }
         peekSpaces(scnr);
@@ -5343,30 +6034,30 @@ function createTokenizer(source, options = {}) {
     }
     function isLinkedDelimiterStart(scnr, context) {
         const { currentType } = context;
-        if (!(currentType === 8 ||
-            currentType === 12)) {
+        if (!(currentType === 8 /* LinkedAlias */ ||
+            currentType === 12 /* LinkedModifier */)) {
             return false;
         }
         peekSpaces(scnr);
-        const ret = scnr.currentPeek() === ":";
+        const ret = scnr.currentPeek() === ":" /* LinkedDelimiter */;
         scnr.resetPeek();
         return ret;
     }
     function isLinkedReferStart(scnr, context) {
         const { currentType } = context;
-        if (currentType !== 10) {
+        if (currentType !== 10 /* LinkedDelimiter */) {
             return false;
         }
         const fn = () => {
             const ch = scnr.currentPeek();
-            if (ch === "{") {
+            if (ch === "{" /* BraceLeft */) {
                 return isIdentifierStart(scnr.peek());
             }
-            else if (ch === "@" ||
-                ch === "%" ||
-                ch === "|" ||
-                ch === ":" ||
-                ch === "." ||
+            else if (ch === "@" /* LinkedAlias */ ||
+                ch === "%" /* Modulo */ ||
+                ch === "|" /* Pipe */ ||
+                ch === ":" /* LinkedDelimiter */ ||
+                ch === "." /* LinkedDot */ ||
                 ch === CHAR_SP ||
                 !ch) {
                 return false;
@@ -5376,6 +6067,7 @@ function createTokenizer(source, options = {}) {
                 return fn();
             }
             else {
+                // other charactors
                 return isIdentifierStart(ch);
             }
         };
@@ -5385,25 +6077,25 @@ function createTokenizer(source, options = {}) {
     }
     function isPluralStart(scnr) {
         peekSpaces(scnr);
-        const ret = scnr.currentPeek() === "|";
+        const ret = scnr.currentPeek() === "|" /* Pipe */;
         scnr.resetPeek();
         return ret;
     }
     function isTextStart(scnr, reset = true) {
         const fn = (hasSpace = false, prev = '', detectModulo = false) => {
             const ch = scnr.currentPeek();
-            if (ch === "{") {
-                return prev === "%" ? false : hasSpace;
+            if (ch === "{" /* BraceLeft */) {
+                return prev === "%" /* Modulo */ ? false : hasSpace;
             }
-            else if (ch === "@" || !ch) {
-                return prev === "%" ? true : hasSpace;
+            else if (ch === "@" /* LinkedAlias */ || !ch) {
+                return prev === "%" /* Modulo */ ? true : hasSpace;
             }
-            else if (ch === "%") {
+            else if (ch === "%" /* Modulo */) {
                 scnr.peek();
-                return fn(hasSpace, "%", true);
+                return fn(hasSpace, "%" /* Modulo */, true);
             }
-            else if (ch === "|") {
-                return prev === "%" || detectModulo
+            else if (ch === "|" /* Pipe */) {
+                return prev === "%" /* Modulo */ || detectModulo
                     ? true
                     : !(prev === CHAR_SP || prev === CHAR_LF);
             }
@@ -5437,27 +6129,27 @@ function createTokenizer(source, options = {}) {
     function takeIdentifierChar(scnr) {
         const closure = (ch) => {
             const cc = ch.charCodeAt(0);
-            return ((cc >= 97 && cc <= 122) ||
-                (cc >= 65 && cc <= 90) ||
-                (cc >= 48 && cc <= 57) ||
+            return ((cc >= 97 && cc <= 122) || // a-z
+                (cc >= 65 && cc <= 90) || // A-Z
+                (cc >= 48 && cc <= 57) || // 0-9
                 cc === 95 ||
-                cc === 36);
+                cc === 36); // _ $
         };
         return takeChar(scnr, closure);
     }
     function takeDigit(scnr) {
         const closure = (ch) => {
             const cc = ch.charCodeAt(0);
-            return cc >= 48 && cc <= 57;
+            return cc >= 48 && cc <= 57; // 0-9
         };
         return takeChar(scnr, closure);
     }
     function takeHexDigit(scnr) {
         const closure = (ch) => {
             const cc = ch.charCodeAt(0);
-            return ((cc >= 48 && cc <= 57) ||
-                (cc >= 65 && cc <= 70) ||
-                (cc >= 97 && cc <= 102));
+            return ((cc >= 48 && cc <= 57) || // 0-9
+                (cc >= 65 && cc <= 70) || // A-F
+                (cc >= 97 && cc <= 102)); // a-f
         };
         return takeChar(scnr, closure);
     }
@@ -5472,13 +6164,13 @@ function createTokenizer(source, options = {}) {
     function readText(scnr) {
         const fn = (buf) => {
             const ch = scnr.currentChar();
-            if (ch === "{" ||
-                ch === "}" ||
-                ch === "@" ||
+            if (ch === "{" /* BraceLeft */ ||
+                ch === "}" /* BraceRight */ ||
+                ch === "@" /* LinkedAlias */ ||
                 !ch) {
                 return buf;
             }
-            else if (ch === "%") {
+            else if (ch === "%" /* Modulo */) {
                 if (isTextStart(scnr)) {
                     buf += ch;
                     scnr.next();
@@ -5488,7 +6180,7 @@ function createTokenizer(source, options = {}) {
                     return buf;
                 }
             }
-            else if (ch === "|") {
+            else if (ch === "|" /* Pipe */) {
                 return buf;
             }
             else if (ch === CHAR_SP || ch === CHAR_LF) {
@@ -5522,7 +6214,7 @@ function createTokenizer(source, options = {}) {
             name += ch;
         }
         if (scnr.currentChar() === EOF) {
-            emitError(6, currentPosition(), 0);
+            emitError(6 /* UNTERMINATED_CLOSING_BRACE */, currentPosition(), 0);
         }
         return name;
     }
@@ -5537,7 +6229,7 @@ function createTokenizer(source, options = {}) {
             value += getDigits(scnr);
         }
         if (scnr.currentChar() === EOF) {
-            emitError(6, currentPosition(), 0);
+            emitError(6 /* UNTERMINATED_CLOSING_BRACE */, currentPosition(), 0);
         }
         return value;
     }
@@ -5557,7 +6249,8 @@ function createTokenizer(source, options = {}) {
         }
         const current = scnr.currentChar();
         if (current === CHAR_LF || current === EOF) {
-            emitError(2, currentPosition(), 0);
+            emitError(2 /* UNTERMINATED_SINGLE_QUOTE_IN_PLACEHOLDER */, currentPosition(), 0);
+            // TODO: Is it correct really?
             if (current === CHAR_LF) {
                 scnr.next();
                 eat(scnr, `\'`);
@@ -5579,7 +6272,7 @@ function createTokenizer(source, options = {}) {
             case 'U':
                 return readUnicodeEscapeSequence(scnr, ch, 6);
             default:
-                emitError(3, currentPosition(), 0, ch);
+                emitError(3 /* UNKNOWN_ESCAPE_SEQUENCE */, currentPosition(), 0, ch);
                 return '';
         }
     }
@@ -5589,7 +6282,7 @@ function createTokenizer(source, options = {}) {
         for (let i = 0; i < digits; i++) {
             const ch = takeHexDigit(scnr);
             if (!ch) {
-                emitError(4, currentPosition(), 0, `\\${unicode}${sequence}${scnr.currentChar()}`);
+                emitError(4 /* INVALID_UNICODE_ESCAPE_SEQUENCE */, currentPosition(), 0, `\\${unicode}${sequence}${scnr.currentChar()}`);
                 break;
             }
             sequence += ch;
@@ -5600,8 +6293,8 @@ function createTokenizer(source, options = {}) {
         skipSpaces(scnr);
         let ch = '';
         let identifiers = '';
-        const closure = (ch) => ch !== "{" &&
-            ch !== "}" &&
+        const closure = (ch) => ch !== "{" /* BraceLeft */ &&
+            ch !== "}" /* BraceRight */ &&
             ch !== CHAR_SP &&
             ch !== CHAR_LF;
         while ((ch = takeChar(scnr, closure))) {
@@ -5620,10 +6313,10 @@ function createTokenizer(source, options = {}) {
     function readLinkedRefer(scnr) {
         const fn = (detect = false, buf) => {
             const ch = scnr.currentChar();
-            if (ch === "{" ||
-                ch === "%" ||
-                ch === "@" ||
-                ch === "|" ||
+            if (ch === "{" /* BraceLeft */ ||
+                ch === "%" /* Modulo */ ||
+                ch === "@" /* LinkedAlias */ ||
+                ch === "|" /* Pipe */ ||
                 !ch) {
                 return buf;
             }
@@ -5645,39 +6338,40 @@ function createTokenizer(source, options = {}) {
     }
     function readPlural(scnr) {
         skipSpaces(scnr);
-        const plural = eat(scnr, "|");
+        const plural = eat(scnr, "|" /* Pipe */);
         skipSpaces(scnr);
         return plural;
     }
+    // TODO: We need refactoring of token parsing ...
     function readTokenInPlaceholder(scnr, context) {
         let token = null;
         const ch = scnr.currentChar();
         switch (ch) {
-            case "{":
+            case "{" /* BraceLeft */:
                 if (context.braceNest >= 1) {
-                    emitError(8, currentPosition(), 0);
+                    emitError(8 /* NOT_ALLOW_NEST_PLACEHOLDER */, currentPosition(), 0);
                 }
                 scnr.next();
-                token = getToken(context, 2, "{");
+                token = getToken(context, 2 /* BraceLeft */, "{" /* BraceLeft */);
                 skipSpaces(scnr);
                 context.braceNest++;
                 return token;
-            case "}":
+            case "}" /* BraceRight */:
                 if (context.braceNest > 0 &&
-                    context.currentType === 2) {
-                    emitError(7, currentPosition(), 0);
+                    context.currentType === 2 /* BraceLeft */) {
+                    emitError(7 /* EMPTY_PLACEHOLDER */, currentPosition(), 0);
                 }
                 scnr.next();
-                token = getToken(context, 3, "}");
+                token = getToken(context, 3 /* BraceRight */, "}" /* BraceRight */);
                 context.braceNest--;
                 context.braceNest > 0 && skipSpaces(scnr);
                 if (context.inLinked && context.braceNest === 0) {
                     context.inLinked = false;
                 }
                 return token;
-            case "@":
+            case "@" /* LinkedAlias */:
                 if (context.braceNest > 0) {
-                    emitError(6, currentPosition(), 0);
+                    emitError(6 /* UNTERMINATED_CLOSING_BRACE */, currentPosition(), 0);
                 }
                 token = readTokenInLinked(scnr, context) || getEndToken(context);
                 context.braceNest = 0;
@@ -5688,39 +6382,41 @@ function createTokenizer(source, options = {}) {
                 let validLeteral = true;
                 if (isPluralStart(scnr)) {
                     if (context.braceNest > 0) {
-                        emitError(6, currentPosition(), 0);
+                        emitError(6 /* UNTERMINATED_CLOSING_BRACE */, currentPosition(), 0);
                     }
-                    token = getToken(context, 1, readPlural(scnr));
+                    token = getToken(context, 1 /* Pipe */, readPlural(scnr));
+                    // reset
                     context.braceNest = 0;
                     context.inLinked = false;
                     return token;
                 }
                 if (context.braceNest > 0 &&
-                    (context.currentType === 5 ||
-                        context.currentType === 6 ||
-                        context.currentType === 7)) {
-                    emitError(6, currentPosition(), 0);
+                    (context.currentType === 5 /* Named */ ||
+                        context.currentType === 6 /* List */ ||
+                        context.currentType === 7 /* Literal */)) {
+                    emitError(6 /* UNTERMINATED_CLOSING_BRACE */, currentPosition(), 0);
                     context.braceNest = 0;
                     return readToken(scnr, context);
                 }
                 if ((validNamedIdentifier = isNamedIdentifierStart(scnr, context))) {
-                    token = getToken(context, 5, readNamedIdentifier(scnr));
+                    token = getToken(context, 5 /* Named */, readNamedIdentifier(scnr));
                     skipSpaces(scnr);
                     return token;
                 }
                 if ((validListIdentifier = isListIdentifierStart(scnr, context))) {
-                    token = getToken(context, 6, readListIdentifier(scnr));
+                    token = getToken(context, 6 /* List */, readListIdentifier(scnr));
                     skipSpaces(scnr);
                     return token;
                 }
                 if ((validLeteral = isLiteralStart(scnr, context))) {
-                    token = getToken(context, 7, readLiteral(scnr));
+                    token = getToken(context, 7 /* Literal */, readLiteral(scnr));
                     skipSpaces(scnr);
                     return token;
                 }
                 if (!validNamedIdentifier && !validListIdentifier && !validLeteral) {
-                    token = getToken(context, 13, readInvalidIdentifier(scnr));
-                    emitError(1, currentPosition(), 0, token.value);
+                    // TODO: we should be re-designed invalid cases, when we will extend message syntax near the future ...
+                    token = getToken(context, 13 /* InvalidPlace */, readInvalidIdentifier(scnr));
+                    emitError(1 /* INVALID_TOKEN_IN_PLACEHOLDER */, currentPosition(), 0, token.value);
                     skipSpaces(scnr);
                     return token;
                 }
@@ -5728,34 +6424,36 @@ function createTokenizer(source, options = {}) {
         }
         return token;
     }
+    // TODO: We need refactoring of token parsing ...
     function readTokenInLinked(scnr, context) {
         const { currentType } = context;
         let token = null;
         const ch = scnr.currentChar();
-        if ((currentType === 8 ||
-            currentType === 9 ||
-            currentType === 12 ||
-            currentType === 10) &&
+        if ((currentType === 8 /* LinkedAlias */ ||
+            currentType === 9 /* LinkedDot */ ||
+            currentType === 12 /* LinkedModifier */ ||
+            currentType === 10 /* LinkedDelimiter */) &&
             (ch === CHAR_LF || ch === CHAR_SP)) {
-            emitError(9, currentPosition(), 0);
+            emitError(9 /* INVALID_LINKED_FORMAT */, currentPosition(), 0);
         }
         switch (ch) {
-            case "@":
+            case "@" /* LinkedAlias */:
                 scnr.next();
-                token = getToken(context, 8, "@");
+                token = getToken(context, 8 /* LinkedAlias */, "@" /* LinkedAlias */);
                 context.inLinked = true;
                 return token;
-            case ".":
+            case "." /* LinkedDot */:
                 skipSpaces(scnr);
                 scnr.next();
-                return getToken(context, 9, ".");
-            case ":":
+                return getToken(context, 9 /* LinkedDot */, "." /* LinkedDot */);
+            case ":" /* LinkedDelimiter */:
                 skipSpaces(scnr);
                 scnr.next();
-                return getToken(context, 10, ":");
+                return getToken(context, 10 /* LinkedDelimiter */, ":" /* LinkedDelimiter */);
             default:
                 if (isPluralStart(scnr)) {
-                    token = getToken(context, 1, readPlural(scnr));
+                    token = getToken(context, 1 /* Pipe */, readPlural(scnr));
+                    // reset
                     context.braceNest = 0;
                     context.inLinked = false;
                     return token;
@@ -5767,27 +6465,29 @@ function createTokenizer(source, options = {}) {
                 }
                 if (isLinkedModifierStart(scnr, context)) {
                     skipSpaces(scnr);
-                    return getToken(context, 12, readLinkedModifier(scnr));
+                    return getToken(context, 12 /* LinkedModifier */, readLinkedModifier(scnr));
                 }
                 if (isLinkedReferStart(scnr, context)) {
                     skipSpaces(scnr);
-                    if (ch === "{") {
+                    if (ch === "{" /* BraceLeft */) {
+                        // scan the placeholder
                         return readTokenInPlaceholder(scnr, context) || token;
                     }
                     else {
-                        return getToken(context, 11, readLinkedRefer(scnr));
+                        return getToken(context, 11 /* LinkedKey */, readLinkedRefer(scnr));
                     }
                 }
-                if (currentType === 8) {
-                    emitError(9, currentPosition(), 0);
+                if (currentType === 8 /* LinkedAlias */) {
+                    emitError(9 /* INVALID_LINKED_FORMAT */, currentPosition(), 0);
                 }
                 context.braceNest = 0;
                 context.inLinked = false;
                 return readToken(scnr, context);
         }
     }
+    // TODO: We need refactoring of token parsing ...
     function readToken(scnr, context) {
-        let token = { type: 14 };
+        let token = { type: 14 /* EOF */ };
         if (context.braceNest > 0) {
             return readTokenInPlaceholder(scnr, context) || getEndToken(context);
         }
@@ -5796,27 +6496,28 @@ function createTokenizer(source, options = {}) {
         }
         const ch = scnr.currentChar();
         switch (ch) {
-            case "{":
+            case "{" /* BraceLeft */:
                 return readTokenInPlaceholder(scnr, context) || getEndToken(context);
-            case "}":
-                emitError(5, currentPosition(), 0);
+            case "}" /* BraceRight */:
+                emitError(5 /* UNBALANCED_CLOSING_BRACE */, currentPosition(), 0);
                 scnr.next();
-                return getToken(context, 3, "}");
-            case "@":
+                return getToken(context, 3 /* BraceRight */, "}" /* BraceRight */);
+            case "@" /* LinkedAlias */:
                 return readTokenInLinked(scnr, context) || getEndToken(context);
             default:
                 if (isPluralStart(scnr)) {
-                    token = getToken(context, 1, readPlural(scnr));
+                    token = getToken(context, 1 /* Pipe */, readPlural(scnr));
+                    // reset
                     context.braceNest = 0;
                     context.inLinked = false;
                     return token;
                 }
                 if (isTextStart(scnr)) {
-                    return getToken(context, 0, readText(scnr));
+                    return getToken(context, 0 /* Text */, readText(scnr));
                 }
-                if (ch === "%") {
+                if (ch === "%" /* Modulo */) {
                     scnr.next();
-                    return getToken(context, 4, "%");
+                    return getToken(context, 4 /* Modulo */, "%" /* Modulo */);
                 }
                 break;
         }
@@ -5831,7 +6532,7 @@ function createTokenizer(source, options = {}) {
         _context.offset = currentOffset();
         _context.startLoc = currentPosition();
         if (_scnr.currentChar() === EOF) {
-            return getToken(_context, 14);
+            return getToken(_context, 14 /* EOF */);
         }
         return readToken(_scnr, _context);
     }
@@ -5844,6 +6545,7 @@ function createTokenizer(source, options = {}) {
 }
 
 const ERROR_DOMAIN$1 = 'parser';
+// Backslash backslash, backslash quote, uHHHH, UHHHHHH.
 const KNOWN_ESCAPES = /(?:\\\\|\\'|\\u([0-9a-fA-F]{4})|\\U([0-9a-fA-F]{6}))/g;
 function fromEscapeSequence(match, codePoint4, codePoint6) {
     switch (match) {
@@ -5856,10 +6558,13 @@ function fromEscapeSequence(match, codePoint4, codePoint6) {
             if (codePoint <= 0xd7ff || codePoint >= 0xe000) {
                 return String.fromCodePoint(codePoint);
             }
+            // invalid ...
+            // Replace them with U+FFFD REPLACEMENT CHARACTER.
             return '�';
         }
     }
 }
+/** @internal */
 function createParser(options = {}) {
     const location = !options.location;
     const { onError } = options;
@@ -5898,94 +6603,97 @@ function createParser(options = {}) {
     }
     function parseText(tokenizer, value) {
         const context = tokenizer.context();
-        const node = startNode(3, context.offset, context.startLoc);
+        const node = startNode(3 /* Text */, context.offset, context.startLoc);
         node.value = value;
         endNode(node, tokenizer.currentOffset(), tokenizer.currentPosition());
         return node;
     }
     function parseList(tokenizer, index) {
         const context = tokenizer.context();
-        const { lastOffset: offset, lastStartLoc: loc } = context;
-        const node = startNode(5, offset, loc);
+        const { lastOffset: offset, lastStartLoc: loc } = context; // get brace left loc
+        const node = startNode(5 /* List */, offset, loc);
         node.index = parseInt(index, 10);
-        tokenizer.nextToken();
+        tokenizer.nextToken(); // skip brach right
         endNode(node, tokenizer.currentOffset(), tokenizer.currentPosition());
         return node;
     }
     function parseNamed(tokenizer, key) {
         const context = tokenizer.context();
-        const { lastOffset: offset, lastStartLoc: loc } = context;
-        const node = startNode(4, offset, loc);
+        const { lastOffset: offset, lastStartLoc: loc } = context; // get brace left loc
+        const node = startNode(4 /* Named */, offset, loc);
         node.key = key;
-        tokenizer.nextToken();
+        tokenizer.nextToken(); // skip brach right
         endNode(node, tokenizer.currentOffset(), tokenizer.currentPosition());
         return node;
     }
     function parseLiteral(tokenizer, value) {
         const context = tokenizer.context();
-        const { lastOffset: offset, lastStartLoc: loc } = context;
-        const node = startNode(9, offset, loc);
+        const { lastOffset: offset, lastStartLoc: loc } = context; // get brace left loc
+        const node = startNode(9 /* Literal */, offset, loc);
         node.value = value.replace(KNOWN_ESCAPES, fromEscapeSequence);
-        tokenizer.nextToken();
+        tokenizer.nextToken(); // skip brach right
         endNode(node, tokenizer.currentOffset(), tokenizer.currentPosition());
         return node;
     }
     function parseLinkedModifier(tokenizer) {
         const token = tokenizer.nextToken();
         const context = tokenizer.context();
+        // check token
         if (token.value == null) {
-            emitError(tokenizer, 11, context.lastStartLoc, 0, token.type);
+            emitError(tokenizer, 11 /* UNEXPECTED_LEXICAL_ANALYSIS */, context.lastStartLoc, 0, token.type);
         }
-        const { lastOffset: offset, lastStartLoc: loc } = context;
-        const node = startNode(8, offset, loc);
+        const { lastOffset: offset, lastStartLoc: loc } = context; // get linked dot loc
+        const node = startNode(8 /* LinkedModifier */, offset, loc);
         node.value = token.value || '';
         endNode(node, tokenizer.currentOffset(), tokenizer.currentPosition());
         return node;
     }
     function parseLinkedKey(tokenizer, value) {
         const context = tokenizer.context();
-        const node = startNode(7, context.offset, context.startLoc);
+        const node = startNode(7 /* LinkedKey */, context.offset, context.startLoc);
         node.value = value;
         endNode(node, tokenizer.currentOffset(), tokenizer.currentPosition());
         return node;
     }
     function parseLinked(tokenizer) {
         const context = tokenizer.context();
-        const linkedNode = startNode(6, context.offset, context.startLoc);
+        const linkedNode = startNode(6 /* Linked */, context.offset, context.startLoc);
         let token = tokenizer.nextToken();
-        if (token.type === 9) {
+        if (token.type === 9 /* LinkedDot */) {
             linkedNode.modifier = parseLinkedModifier(tokenizer);
             token = tokenizer.nextToken();
         }
-        if (token.type !== 10) {
-            emitError(tokenizer, 11, context.lastStartLoc, 0, token.type);
+        // asset check token
+        if (token.type !== 10 /* LinkedDelimiter */) {
+            emitError(tokenizer, 11 /* UNEXPECTED_LEXICAL_ANALYSIS */, context.lastStartLoc, 0, token.type);
         }
         token = tokenizer.nextToken();
-        if (token.type === 2) {
+        // skip brace left
+        if (token.type === 2 /* BraceLeft */) {
             token = tokenizer.nextToken();
         }
         switch (token.type) {
-            case 11:
+            case 11 /* LinkedKey */:
                 if (token.value == null) {
-                    emitError(tokenizer, 11, context.lastStartLoc, 0, token.type);
+                    emitError(tokenizer, 11 /* UNEXPECTED_LEXICAL_ANALYSIS */, context.lastStartLoc, 0, token.type);
                 }
                 linkedNode.key = parseLinkedKey(tokenizer, token.value || '');
                 break;
-            case 5:
+            case 5 /* Named */:
                 if (token.value == null) {
-                    emitError(tokenizer, 11, context.lastStartLoc, 0, token.type);
+                    emitError(tokenizer, 11 /* UNEXPECTED_LEXICAL_ANALYSIS */, context.lastStartLoc, 0, token.type);
                 }
                 linkedNode.key = parseNamed(tokenizer, token.value || '');
                 break;
-            case 6:
+            case 6 /* List */:
                 if (token.value == null) {
-                    emitError(tokenizer, 11, context.lastStartLoc, 0, token.type);
+                    emitError(tokenizer, 11 /* UNEXPECTED_LEXICAL_ANALYSIS */, context.lastStartLoc, 0, token.type);
                 }
                 linkedNode.key = parseList(tokenizer, token.value || '');
                 break;
-            case 7:
+            case 7 /* Literal */:
                 if (token.value == null) {
-                    emitError(tokenizer, 11, context.lastStartLoc, 0, token.type);
+                    emitError(tokenizer, 11 /* UNEXPECTED_LEXICAL_ANALYSIS */, context.lastStartLoc, 0, token.type);
                 }
                 linkedNode.key = parseLiteral(tokenizer, token.value || '');
                 break;
@@ -5995,51 +6703,52 @@ function createParser(options = {}) {
     }
     function parseMessage(tokenizer) {
         const context = tokenizer.context();
-        const startOffset = context.currentType === 1
+        const startOffset = context.currentType === 1 /* Pipe */
             ? tokenizer.currentOffset()
             : context.offset;
-        const startLoc = context.currentType === 1
+        const startLoc = context.currentType === 1 /* Pipe */
             ? context.endLoc
             : context.startLoc;
-        const node = startNode(2, startOffset, startLoc);
+        const node = startNode(2 /* Message */, startOffset, startLoc);
         node.items = [];
         do {
             const token = tokenizer.nextToken();
             switch (token.type) {
-                case 0:
+                case 0 /* Text */:
                     if (token.value == null) {
-                        emitError(tokenizer, 11, context.lastStartLoc, 0, token.type);
+                        emitError(tokenizer, 11 /* UNEXPECTED_LEXICAL_ANALYSIS */, context.lastStartLoc, 0, token.type);
                     }
                     node.items.push(parseText(tokenizer, token.value || ''));
                     break;
-                case 6:
+                case 6 /* List */:
                     if (token.value == null) {
-                        emitError(tokenizer, 11, context.lastStartLoc, 0, token.type);
+                        emitError(tokenizer, 11 /* UNEXPECTED_LEXICAL_ANALYSIS */, context.lastStartLoc, 0, token.type);
                     }
                     node.items.push(parseList(tokenizer, token.value || ''));
                     break;
-                case 5:
+                case 5 /* Named */:
                     if (token.value == null) {
-                        emitError(tokenizer, 11, context.lastStartLoc, 0, token.type);
+                        emitError(tokenizer, 11 /* UNEXPECTED_LEXICAL_ANALYSIS */, context.lastStartLoc, 0, token.type);
                     }
                     node.items.push(parseNamed(tokenizer, token.value || ''));
                     break;
-                case 7:
+                case 7 /* Literal */:
                     if (token.value == null) {
-                        emitError(tokenizer, 11, context.lastStartLoc, 0, token.type);
+                        emitError(tokenizer, 11 /* UNEXPECTED_LEXICAL_ANALYSIS */, context.lastStartLoc, 0, token.type);
                     }
                     node.items.push(parseLiteral(tokenizer, token.value || ''));
                     break;
-                case 8:
+                case 8 /* LinkedAlias */:
                     node.items.push(parseLinked(tokenizer));
                     break;
             }
-        } while (context.currentType !== 14 &&
-            context.currentType !== 1);
-        const endOffset = context.currentType === 1
+        } while (context.currentType !== 14 /* EOF */ &&
+            context.currentType !== 1 /* Pipe */);
+        // adjust message node loc
+        const endOffset = context.currentType === 1 /* Pipe */
             ? context.lastOffset
             : tokenizer.currentOffset();
-        const endLoc = context.currentType === 1
+        const endLoc = context.currentType === 1 /* Pipe */
             ? context.lastEndLoc
             : tokenizer.currentPosition();
         endNode(node, endOffset, endLoc);
@@ -6048,7 +6757,7 @@ function createParser(options = {}) {
     function parsePlural(tokenizer, offset, loc, msgNode) {
         const context = tokenizer.context();
         let hasEmptyMessage = msgNode.items.length === 0;
-        const node = startNode(1, offset, loc);
+        const node = startNode(1 /* Plural */, offset, loc);
         node.cases = [];
         node.cases.push(msgNode);
         do {
@@ -6057,9 +6766,9 @@ function createParser(options = {}) {
                 hasEmptyMessage = msg.items.length === 0;
             }
             node.cases.push(msg);
-        } while (context.currentType !== 14);
+        } while (context.currentType !== 14 /* EOF */);
         if (hasEmptyMessage) {
-            emitError(tokenizer, 10, loc, 0);
+            emitError(tokenizer, 10 /* MUST_HAVE_MESSAGES_IN_PLURAL */, loc, 0);
         }
         endNode(node, tokenizer.currentOffset(), tokenizer.currentPosition());
         return node;
@@ -6068,7 +6777,7 @@ function createParser(options = {}) {
         const context = tokenizer.context();
         const { offset, startLoc } = context;
         const msgNode = parseMessage(tokenizer);
-        if (context.currentType === 14) {
+        if (context.currentType === 14 /* EOF */) {
             return msgNode;
         }
         else {
@@ -6078,10 +6787,14 @@ function createParser(options = {}) {
     function parse(source) {
         const tokenizer = createTokenizer(source, { ...options });
         const context = tokenizer.context();
-        const node = startNode(0, context.offset, context.startLoc);
+        const node = startNode(0 /* Resource */, context.offset, context.startLoc);
+        if (location && node.loc) {
+            node.loc.source = source;
+        }
         node.body = parseResource(tokenizer);
-        if (context.currentType !== 14) {
-            emitError(tokenizer, 11, context.lastStartLoc, 0, context.currentType);
+        // assert wheather achieved to EOF
+        if (context.currentType !== 14 /* EOF */) {
+            emitError(tokenizer, 11 /* UNEXPECTED_LEXICAL_ANALYSIS */, context.lastStartLoc, 0, context.currentType);
         }
         endNode(node, tokenizer.currentOffset(), tokenizer.currentPosition());
         return node;
@@ -6089,7 +6802,8 @@ function createParser(options = {}) {
     return { parse };
 }
 
-function createTransformer(ast, options = {}) {
+function createTransformer(ast, options = {} // eslint-disable-line
+) {
     const _context = {
         ast,
         helpers: new Set()
@@ -6107,52 +6821,57 @@ function traverseNodes(nodes, transformer) {
     }
 }
 function traverseNode(node, transformer) {
+    // TODO: if we need pre-hook of transform, should be implemeted to here
     switch (node.type) {
-        case 1:
+        case 1 /* Plural */:
             traverseNodes(node.cases, transformer);
-            transformer.helper("pluralIndex");
-            transformer.helper("pluralRule");
-            transformer.helper("orgPluralRule");
+            transformer.helper("plural" /* PLURAL */);
             break;
-        case 2:
+        case 2 /* Message */:
             traverseNodes(node.items, transformer);
             break;
-        case 6:
+        case 6 /* Linked */:
             const linked = node;
-            if (linked.modifier) {
-                traverseNode(linked.modifier, transformer);
-                transformer.helper("modifier");
-                transformer.helper("type");
-            }
             traverseNode(linked.key, transformer);
-            transformer.helper("message");
+            transformer.helper("linked" /* LINKED */);
             break;
-        case 5:
-            transformer.helper("interpolate");
-            transformer.helper("list");
+        case 5 /* List */:
+            transformer.helper("interpolate" /* INTERPOLATE */);
+            transformer.helper("list" /* LIST */);
             break;
-        case 4:
-            transformer.helper("interpolate");
-            transformer.helper("named");
+        case 4 /* Named */:
+            transformer.helper("interpolate" /* INTERPOLATE */);
+            transformer.helper("named" /* NAMED */);
             break;
     }
+    // TODO: if we need post-hook of transform, should be implemeted to here
 }
-function transform(ast, options = {}) {
+// transform AST
+function transform(ast, options = {} // eslint-disable-line
+) {
     const transformer = createTransformer(ast);
-    transformer.helper("normalize");
+    transformer.helper("normalize" /* NORMALIZE */);
+    // traverse
     ast.body && traverseNode(ast.body, transformer);
+    // set meta information
     const context = transformer.context();
     ast.helpers = [...context.helpers];
 }
 
-function createCodeGenerator(source) {
+function createCodeGenerator(ast, options) {
+    const { sourceMap, filename } = options;
     const _context = {
-        source,
+        source: ast.loc.source,
+        filename,
         code: '',
+        column: 1,
+        line: 1,
+        offset: 0,
+        map: undefined,
         indentLevel: 0
     };
     const context = () => _context;
-    function push(code) {
+    function push(code, node) {
         _context.code += code;
     }
     function _newline(n) {
@@ -6184,21 +6903,17 @@ function createCodeGenerator(source) {
 }
 function generateLinkedNode(generator, node) {
     const { helper } = generator;
-    if (node.modifier) {
-        generator.push(`${helper("modifier")}(`);
-        generateNode(generator, node.modifier);
-        generator.push(')(');
-    }
-    generator.push(`${helper("message")}(`);
+    generator.push(`${helper("linked" /* LINKED */)}(`);
     generateNode(generator, node.key);
-    generator.push(')(ctx)');
     if (node.modifier) {
-        generator.push(`, ${helper("type")})`);
+        generator.push(`, `);
+        generateNode(generator, node.modifier);
     }
+    generator.push(`)`);
 }
 function generateMessageNode(generator, node) {
     const { helper } = generator;
-    generator.push(`${helper("normalize")}([`);
+    generator.push(`${helper("normalize" /* NORMALIZE */)}([`);
     generator.indent();
     const length = node.items.length;
     for (let i = 0; i < length; i++) {
@@ -6214,7 +6929,7 @@ function generateMessageNode(generator, node) {
 function generatePluralNode(generator, node) {
     const { helper } = generator;
     if (node.cases.length > 1) {
-        generator.push('[');
+        generator.push(`${helper("plural" /* PLURAL */)}([`);
         generator.indent();
         const length = node.cases.length;
         for (let i = 0; i < length; i++) {
@@ -6225,7 +6940,7 @@ function generatePluralNode(generator, node) {
             generator.push(', ');
         }
         generator.deindent();
-        generator.push(`][${helper("pluralRule")}(${helper("pluralIndex")}, ${length}, ${helper("orgPluralRule")})]`);
+        generator.push(`])`);
     }
 }
 function generateResource(generator, node) {
@@ -6239,42 +6954,49 @@ function generateResource(generator, node) {
 function generateNode(generator, node) {
     const { helper } = generator;
     switch (node.type) {
-        case 0:
+        case 0 /* Resource */:
             generateResource(generator, node);
             break;
-        case 1:
+        case 1 /* Plural */:
             generatePluralNode(generator, node);
             break;
-        case 2:
+        case 2 /* Message */:
             generateMessageNode(generator, node);
             break;
-        case 6:
+        case 6 /* Linked */:
             generateLinkedNode(generator, node);
             break;
-        case 8:
-            generator.push(JSON.stringify(node.value));
+        case 8 /* LinkedModifier */:
+            generator.push(JSON.stringify(node.value), node);
             break;
-        case 7:
-            generator.push(JSON.stringify(node.value));
+        case 7 /* LinkedKey */:
+            generator.push(JSON.stringify(node.value), node);
             break;
-        case 5:
-            generator.push(`${helper("interpolate")}(${helper("list")}(${node.index}))`);
+        case 5 /* List */:
+            generator.push(`${helper("interpolate" /* INTERPOLATE */)}(${helper("list" /* LIST */)}(${node.index}))`, node);
             break;
-        case 4:
-            generator.push(`${helper("interpolate")}(${helper("named")}(${JSON.stringify(node.key)}))`);
+        case 4 /* Named */:
+            generator.push(`${helper("interpolate" /* INTERPOLATE */)}(${helper("named" /* NAMED */)}(${JSON.stringify(node.key)}))`, node);
             break;
-        case 9:
-            generator.push(JSON.stringify(node.value));
+        case 9 /* Literal */:
+            generator.push(JSON.stringify(node.value), node);
             break;
-        case 3:
-            generator.push(JSON.stringify(node.value));
+        case 3 /* Text */:
+            generator.push(JSON.stringify(node.value), node);
             break;
     }
 }
-const generate = (ast, options = {}) => {
+// generate code from AST
+/** @internal */
+const generate = (ast, options = {} // eslint-disable-line
+) => {
     const mode = isString$1(options.mode) ? options.mode : 'normal';
+    const filename = isString$1(options.filename)
+        ? options.filename
+        : 'message.intl';
+    const sourceMap = isBoolean(options.sourceMap) ? options.sourceMap : false;
     const helpers = ast.helpers || [];
-    const generator = createCodeGenerator(ast.loc && ast.loc.source);
+    const generator = createCodeGenerator(ast, { mode, filename, sourceMap });
     generator.push(mode === 'normal' ? `function __msg__ (ctx) {` : `(ctx) => {`);
     generator.indent();
     if (helpers.length > 0) {
@@ -6285,47 +7007,66 @@ const generate = (ast, options = {}) => {
     generateNode(generator, ast);
     generator.deindent();
     generator.push(`}`);
-    return generator.context().code;
+    const { code, map } = generator.context();
+    return {
+        ast,
+        code,
+        map: map ? map.toJSON() : undefined // eslint-disable-line @typescript-eslint/no-explicit-any
+    };
 };
 const defaultOnCacheKey = (source) => source;
 let compileCache = Object.create(null);
+/** @internal */
 function baseCompile(source, options = {}) {
+    // parse source codes
     const parser = createParser({ ...options });
     const ast = parser.parse(source);
+    // transform ASTs
     transform(ast, { ...options });
-    const code = generate(ast, { ...options });
-    return { ast, code };
+    // generate javascript codes
+    return generate(ast, { ...options });
 }
+/** @internal */
 function compile(source, options = {}) {
+    // check caches
     const onCacheKey = options.onCacheKey || defaultOnCacheKey;
     const key = onCacheKey(source);
     const cached = compileCache[key];
     if (cached) {
         return cached;
     }
+    // compile error detecting
     let occured = false;
     const onError = options.onError || defaultOnError;
     options.onError = (err) => {
         occured = true;
         onError(err);
     };
+    // compile
     const { code } = baseCompile(source, options);
+    // evaluate function
     const msg = new Function(`return ${code}`)();
+    // if occured compile error, don't cache
     return !occured ? (compileCache[key] = msg) : msg;
 }
 
+/** @internal */
 const NOT_REOSLVED = -1;
+/** @internal */
 const MISSING_RESOLVE_VALUE = '';
 function getDefaultLinkedModifiers() {
     return {
         upper: (val) => (isString$1(val) ? val.toUpperCase() : val),
         lower: (val) => (isString$1(val) ? val.toLowerCase() : val),
+        // prettier-ignore
         capitalize: (val) => (isString$1(val)
             ? `${val.charAt(0).toLocaleUpperCase()}${val.substr(1)}`
             : val)
     };
 }
+/** @internal */
 function createRuntimeContext(options = {}) {
+    // setup options
     const locale = isString$1(options.locale) ? options.locale : 'en-US';
     const fallbackLocale = isArray$1(options.fallbackLocale) ||
         isPlainObject$1(options.fallbackLocale) ||
@@ -6360,10 +7101,12 @@ function createRuntimeContext(options = {}) {
     const warnHtmlMessage = isBoolean(options.warnHtmlMessage)
         ? options.warnHtmlMessage
         : true;
+    const escapeParameter = !!options.escapeParameter;
     const messageCompiler = isFunction$1(options.messageCompiler)
         ? options.messageCompiler
         : compile;
     const onWarn = isFunction$1(options.onWarn) ? options.onWarn : warn$1;
+    // setup internal options
     const internalOptions = options;
     const __datetimeFormatters = isObject$1(internalOptions.__datetimeFormatters)
         ? internalOptions.__datetimeFormatters
@@ -6387,6 +7130,7 @@ function createRuntimeContext(options = {}) {
         postTranslation,
         processor,
         warnHtmlMessage,
+        escapeParameter,
         messageCompiler,
         onWarn,
         __datetimeFormatters,
@@ -6394,6 +7138,7 @@ function createRuntimeContext(options = {}) {
     };
     return context;
 }
+/** @internal */
 function handleMissing(context, key, locale, missingWarn, type) {
     const { missing, onWarn } = context;
     if (missing !== null) {
@@ -6404,6 +7149,7 @@ function handleMissing(context, key, locale, missingWarn, type) {
         return key;
     }
 }
+/** @internal */
 function getLocaleChain(ctx, fallback, start = '') {
     const context = ctx;
     if (start === '') {
@@ -6415,10 +7161,14 @@ function getLocaleChain(ctx, fallback, start = '') {
     let chain = context.__localeChainCache.get(start);
     if (!chain) {
         chain = [];
+        // first block defined by start
         let block = [start];
+        // while any intervening block found
         while (isArray$1(block)) {
             block = appendBlockToChain(chain, block, fallback);
         }
+        // prettier-ignore
+        // last block defined by default
         const defaults = isArray$1(fallback)
             ? fallback
             : isPlainObject$1(fallback)
@@ -6426,6 +7176,7 @@ function getLocaleChain(ctx, fallback, start = '') {
                     ? fallback['default']
                     : null
                 : fallback;
+        // convert defaults to array
         block = isString$1(defaults) ? [defaults] : defaults;
         if (isArray$1(block)) {
             appendBlockToChain(chain, block, false);
@@ -6463,13 +7214,16 @@ function appendItemToChain(chain, target, blocks) {
             const locale = target.replace(/!/g, '');
             chain.push(locale);
             if ((isArray$1(blocks) || isPlainObject$1(blocks)) &&
-                blocks[locale]) {
+                blocks[locale] // eslint-disable-line @typescript-eslint/no-explicit-any
+            ) {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 follow = blocks[locale];
             }
         }
     }
     return follow;
 }
+/** @internal */
 function updateFallbackLocale(ctx, locale, fallback) {
     const context = ctx;
     context.__localeChainCache = new Map();
@@ -6477,111 +7231,129 @@ function updateFallbackLocale(ctx, locale, fallback) {
 }
 
 const pathStateMachine = [];
-pathStateMachine[0] = {
-    ["w"]: [0],
-    ["i"]: [3, 0],
-    ["["]: [4],
-    ["o"]: [7]
+pathStateMachine[0 /* BEFORE_PATH */] = {
+    ["w" /* WORKSPACE */]: [0 /* BEFORE_PATH */],
+    ["i" /* IDENT */]: [3 /* IN_IDENT */, 0 /* APPEND */],
+    ["[" /* LEFT_BRACKET */]: [4 /* IN_SUB_PATH */],
+    ["o" /* END_OF_FAIL */]: [7 /* AFTER_PATH */]
 };
-pathStateMachine[1] = {
-    ["w"]: [1],
-    ["."]: [2],
-    ["["]: [4],
-    ["o"]: [7]
+pathStateMachine[1 /* IN_PATH */] = {
+    ["w" /* WORKSPACE */]: [1 /* IN_PATH */],
+    ["." /* DOT */]: [2 /* BEFORE_IDENT */],
+    ["[" /* LEFT_BRACKET */]: [4 /* IN_SUB_PATH */],
+    ["o" /* END_OF_FAIL */]: [7 /* AFTER_PATH */]
 };
-pathStateMachine[2] = {
-    ["w"]: [2],
-    ["i"]: [3, 0],
-    ["0"]: [3, 0]
+pathStateMachine[2 /* BEFORE_IDENT */] = {
+    ["w" /* WORKSPACE */]: [2 /* BEFORE_IDENT */],
+    ["i" /* IDENT */]: [3 /* IN_IDENT */, 0 /* APPEND */],
+    ["0" /* ZERO */]: [3 /* IN_IDENT */, 0 /* APPEND */]
 };
-pathStateMachine[3] = {
-    ["i"]: [3, 0],
-    ["0"]: [3, 0],
-    ["w"]: [1, 1],
-    ["."]: [2, 1],
-    ["["]: [4, 1],
-    ["o"]: [7, 1]
+pathStateMachine[3 /* IN_IDENT */] = {
+    ["i" /* IDENT */]: [3 /* IN_IDENT */, 0 /* APPEND */],
+    ["0" /* ZERO */]: [3 /* IN_IDENT */, 0 /* APPEND */],
+    ["w" /* WORKSPACE */]: [1 /* IN_PATH */, 1 /* PUSH */],
+    ["." /* DOT */]: [2 /* BEFORE_IDENT */, 1 /* PUSH */],
+    ["[" /* LEFT_BRACKET */]: [4 /* IN_SUB_PATH */, 1 /* PUSH */],
+    ["o" /* END_OF_FAIL */]: [7 /* AFTER_PATH */, 1 /* PUSH */]
 };
-pathStateMachine[4] = {
-    ["'"]: [5, 0],
-    ["\""]: [6, 0],
-    ["["]: [
-        4,
-        2
+pathStateMachine[4 /* IN_SUB_PATH */] = {
+    ["'" /* SINGLE_QUOTE */]: [5 /* IN_SINGLE_QUOTE */, 0 /* APPEND */],
+    ["\"" /* DOUBLE_QUOTE */]: [6 /* IN_DOUBLE_QUOTE */, 0 /* APPEND */],
+    ["[" /* LEFT_BRACKET */]: [
+        4 /* IN_SUB_PATH */,
+        2 /* INC_SUB_PATH_DEPTH */
     ],
-    ["]"]: [1, 3],
-    ["o"]: 8,
-    ["l"]: [4, 0]
+    ["]" /* RIGHT_BRACKET */]: [1 /* IN_PATH */, 3 /* PUSH_SUB_PATH */],
+    ["o" /* END_OF_FAIL */]: 8 /* ERROR */,
+    ["l" /* ELSE */]: [4 /* IN_SUB_PATH */, 0 /* APPEND */]
 };
-pathStateMachine[5] = {
-    ["'"]: [4, 0],
-    ["o"]: 8,
-    ["l"]: [5, 0]
+pathStateMachine[5 /* IN_SINGLE_QUOTE */] = {
+    ["'" /* SINGLE_QUOTE */]: [4 /* IN_SUB_PATH */, 0 /* APPEND */],
+    ["o" /* END_OF_FAIL */]: 8 /* ERROR */,
+    ["l" /* ELSE */]: [5 /* IN_SINGLE_QUOTE */, 0 /* APPEND */]
 };
-pathStateMachine[6] = {
-    ["\""]: [4, 0],
-    ["o"]: 8,
-    ["l"]: [6, 0]
+pathStateMachine[6 /* IN_DOUBLE_QUOTE */] = {
+    ["\"" /* DOUBLE_QUOTE */]: [4 /* IN_SUB_PATH */, 0 /* APPEND */],
+    ["o" /* END_OF_FAIL */]: 8 /* ERROR */,
+    ["l" /* ELSE */]: [6 /* IN_DOUBLE_QUOTE */, 0 /* APPEND */]
 };
+/**
+ * Check if an expression is a literal value.
+ */
 const literalValueRE = /^\s?(?:true|false|-?[\d.]+|'[^']*'|"[^"]*")\s?$/;
 function isLiteral(exp) {
     return literalValueRE.test(exp);
 }
+/**
+ * Strip quotes from a string
+ */
 function stripQuotes(str) {
     const a = str.charCodeAt(0);
     const b = str.charCodeAt(str.length - 1);
     return a === b && (a === 0x22 || a === 0x27) ? str.slice(1, -1) : str;
 }
+/**
+ * Determine the type of a character in a keypath.
+ */
 function getPathCharType(ch) {
     if (ch === undefined || ch === null) {
-        return "o";
+        return "o" /* END_OF_FAIL */;
     }
     const code = ch.charCodeAt(0);
     switch (code) {
-        case 0x5b:
-        case 0x5d:
-        case 0x2e:
-        case 0x22:
-        case 0x27:
+        case 0x5b: // [
+        case 0x5d: // ]
+        case 0x2e: // .
+        case 0x22: // "
+        case 0x27: // '
             return ch;
-        case 0x5f:
-        case 0x24:
-        case 0x2d:
-            return "i";
-        case 0x09:
-        case 0x0a:
-        case 0x0d:
-        case 0xa0:
-        case 0xfeff:
-        case 0x2028:
-        case 0x2029:
-            return "w";
+        case 0x5f: // _
+        case 0x24: // $
+        case 0x2d: // -
+            return "i" /* IDENT */;
+        case 0x09: // Tab (HT)
+        case 0x0a: // Newline (LF)
+        case 0x0d: // Return (CR)
+        case 0xa0: // No-break space (NBSP)
+        case 0xfeff: // Byte Order Mark (BOM)
+        case 0x2028: // Line Separator (LS)
+        case 0x2029: // Paragraph Separator (PS)
+            return "w" /* WORKSPACE */;
     }
-    return "i";
+    return "i" /* IDENT */;
 }
+/**
+ * Format a subPath, return its plain form if it is
+ * a literal string or number. Otherwise prepend the
+ * dynamic indicator (*).
+ */
 function formatSubPath(path) {
     const trimmed = path.trim();
+    // invalid leading 0
     if (path.charAt(0) === '0' && isNaN(parseInt(path))) {
         return false;
     }
     return isLiteral(trimmed)
         ? stripQuotes(trimmed)
-        : "*" + trimmed;
+        : "*" /* ASTARISK */ + trimmed;
 }
+/**
+ * Parse a string path into an array of segments
+ */
 function parse(path) {
     const keys = [];
     let index = -1;
-    let mode = 0;
+    let mode = 0 /* BEFORE_PATH */;
     let subPathDepth = 0;
     let c;
-    let key;
+    let key; // eslint-disable-line
     let newChar;
     let type;
     let transition;
     let action;
     let typeMap;
     const actions = [];
-    actions[0] = () => {
+    actions[0 /* APPEND */] = () => {
         if (key === undefined) {
             key = newChar;
         }
@@ -6589,21 +7361,21 @@ function parse(path) {
             key += newChar;
         }
     };
-    actions[1] = () => {
+    actions[1 /* PUSH */] = () => {
         if (key !== undefined) {
             keys.push(key);
             key = undefined;
         }
     };
-    actions[2] = () => {
-        actions[0]();
+    actions[2 /* INC_SUB_PATH_DEPTH */] = () => {
+        actions[0 /* APPEND */]();
         subPathDepth++;
     };
-    actions[3] = () => {
+    actions[3 /* PUSH_SUB_PATH */] = () => {
         if (subPathDepth > 0) {
             subPathDepth--;
-            mode = 4;
-            actions[0]();
+            mode = 4 /* IN_SUB_PATH */;
+            actions[0 /* APPEND */]();
         }
         else {
             subPathDepth = 0;
@@ -6615,19 +7387,19 @@ function parse(path) {
                 return false;
             }
             else {
-                actions[1]();
+                actions[1 /* PUSH */]();
             }
         }
     };
     function maybeUnescapeQuote() {
         const nextChar = path[index + 1];
-        if ((mode === 5 &&
-            nextChar === "'") ||
-            (mode === 6 &&
-                nextChar === "\"")) {
+        if ((mode === 5 /* IN_SINGLE_QUOTE */ &&
+            nextChar === "'" /* SINGLE_QUOTE */) ||
+            (mode === 6 /* IN_DOUBLE_QUOTE */ &&
+                nextChar === "\"" /* DOUBLE_QUOTE */)) {
             index++;
             newChar = '\\' + nextChar;
-            actions[0]();
+            actions[0 /* APPEND */]();
             return true;
         }
     }
@@ -6639,8 +7411,9 @@ function parse(path) {
         }
         type = getPathCharType(c);
         typeMap = pathStateMachine[mode];
-        transition = typeMap[type] || typeMap["l"] || 8;
-        if (transition === 8) {
+        transition = typeMap[type] || typeMap["l" /* ELSE */] || 8 /* ERROR */;
+        // check parse error
+        if (transition === 8 /* ERROR */) {
             return;
         }
         mode = transition[0];
@@ -6653,16 +7426,20 @@ function parse(path) {
                 }
             }
         }
-        if (mode === 7) {
+        // check parse finish
+        if (mode === 7 /* AFTER_PATH */) {
             return keys;
         }
     }
 }
+// path token cache
 const cache = new Map();
 function resolveValue(obj, path) {
+    // check object
     if (!isObject$1(obj)) {
         return null;
     }
+    // parse path
     let hit = cache.get(path);
     if (!hit) {
         hit = parse(path);
@@ -6670,9 +7447,11 @@ function resolveValue(obj, path) {
             cache.set(path, hit);
         }
     }
+    // check hit
     if (!hit) {
         return null;
     }
+    // resolve path value
     const len = hit.length;
     let last = obj;
     let i = 0;
@@ -6688,13 +7467,14 @@ function resolveValue(obj, path) {
 }
 
 const DEFAULT_MODIFIER = (str) => str;
-const DEFAULT_MESSAGE = (ctx) => '';
+const DEFAULT_MESSAGE = (ctx) => ''; // eslint-disable-line
 const DEFAULT_MESSAGE_DATA_TYPE = 'text';
 const DEFAULT_NORMALIZE = (values) => values.length === 0 ? '' : values.join('');
 const DEFAULT_INTERPOLATE = toDisplayString$1;
 function pluralDefault(choice, choicesLength) {
     choice = Math.abs(choice);
     if (choicesLength === 2) {
+        // prettier-ignore
         return choice
             ? choice > 1
                 ? 1
@@ -6704,9 +7484,11 @@ function pluralDefault(choice, choicesLength) {
     return choice ? Math.min(choice, 2) : 0;
 }
 function getPluralIndex(options) {
+    // prettier-ignore
     const index = isNumber(options.pluralIndex)
         ? options.pluralIndex
         : -1;
+    // prettier-ignore
     return options.named && (isNumber(options.named.count) || isNumber(options.named.n))
         ? isNumber(options.named.count)
             ? options.named.count
@@ -6736,29 +7518,30 @@ function createMessageContext(options = {}) {
         isFunction$1(options.pluralRules[locale])
         ? pluralDefault
         : undefined;
+    const plural = (messages) => messages[pluralRule(pluralIndex, messages.length, orgPluralRule)];
     const _list = options.list || [];
     const list = (index) => _list[index];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const _named = options.named || {};
     isNumber(options.pluralIndex) && normalizeNamed(pluralIndex, _named);
     const named = (key) => _named[key];
-    const modifier = (name) => options.modifiers
-        ? options.modifiers[name]
-        : DEFAULT_MODIFIER;
-    function message(name) {
+    // TODO: need to design resolve message function?
+    function message(key) {
+        // prettier-ignore
         const msg = isFunction$1(options.messages)
-            ? options.messages(name)
+            ? options.messages(key)
             : isObject$1(options.messages)
-                ? options.messages[name]
+                ? options.messages[key]
                 : false;
         return !msg
             ? options.parent
-                ? options.parent.message(name)
+                ? options.parent.message(key) // resolve from parent messages
                 : DEFAULT_MESSAGE
             : msg;
     }
-    const type = isPlainObject$1(options.processor) && isString$1(options.processor.type)
-        ? options.processor.type
-        : DEFAULT_MESSAGE_DATA_TYPE;
+    const _modifier = (name) => options.modifiers
+        ? options.modifiers[name]
+        : DEFAULT_MODIFIER;
     const normalize = isPlainObject$1(options.processor) && isFunction$1(options.processor.normalize)
         ? options.processor.normalize
         : DEFAULT_NORMALIZE;
@@ -6766,28 +7549,37 @@ function createMessageContext(options = {}) {
         isFunction$1(options.processor.interpolate)
         ? options.processor.interpolate
         : DEFAULT_INTERPOLATE;
-    return {
-        ["list"]: list,
-        ["named"]: named,
-        ["pluralIndex"]: pluralIndex,
-        ["pluralRule"]: pluralRule,
-        ["orgPluralRule"]: orgPluralRule,
-        ["modifier"]: modifier,
-        ["message"]: message,
-        ["type"]: type,
-        ["interpolate"]: interpolate,
-        ["normalize"]: normalize
+    const type = isPlainObject$1(options.processor) && isString$1(options.processor.type)
+        ? options.processor.type
+        : DEFAULT_MESSAGE_DATA_TYPE;
+    const ctx = {
+        ["list" /* LIST */]: list,
+        ["named" /* NAMED */]: named,
+        ["plural" /* PLURAL */]: plural,
+        ["linked" /* LINKED */]: (key, modifier) => {
+            // TODO: should check `key`
+            const msg = message(key)(ctx);
+            return isString$1(modifier) ? _modifier(modifier)(msg) : msg;
+        },
+        ["message" /* MESSAGE */]: message,
+        ["type" /* TYPE */]: type,
+        ["interpolate" /* INTERPOLATE */]: interpolate,
+        ["normalize" /* NORMALIZE */]: normalize
     };
+    return ctx;
 }
 
+/** @internal */
 function createCoreError(code) {
     return createCompileError(code, null,  undefined);
 }
 
 const NOOP_MESSAGE_FUNCTION = () => '';
 const isMessageFunction = (val) => isFunction$1(val);
+// implementationo of `translate` function
+/** @internal */
 function translate(context, ...args) {
-    const { messages, fallbackFormat, postTranslation, unresolving, fallbackLocale, warnHtmlMessage, messageCompiler, onWarn } = context;
+    const { fallbackFormat, postTranslation, unresolving, fallbackLocale } = context;
     const [key, options] = parseTranslateArgs(...args);
     const missingWarn = isBoolean(options.missingWarn)
         ? options.missingWarn
@@ -6795,30 +7587,25 @@ function translate(context, ...args) {
     const fallbackWarn = isBoolean(options.fallbackWarn)
         ? options.fallbackWarn
         : context.fallbackWarn;
-    const defaultMsgOrKey = isString$1(options.default) || isBoolean(options.default)
+    const escapeParameter = isBoolean(options.escapeParameter)
+        ? options.escapeParameter
+        : context.escapeParameter;
+    // prettier-ignore
+    const defaultMsgOrKey = isString$1(options.default) || isBoolean(options.default) // default by function option
         ? !isBoolean(options.default)
             ? options.default
             : key
-        : fallbackFormat
+        : fallbackFormat // default by `fallbackFormat` option
             ? key
             : '';
     const enableDefaultMsg = fallbackFormat || defaultMsgOrKey !== '';
     const locale = isString$1(options.locale) ? options.locale : context.locale;
-    const locales = getLocaleChain(context, fallbackLocale, locale);
-    let message = {};
-    let targetLocale;
-    let format = null;
-    for (let i = 0; i < locales.length; i++) {
-        targetLocale = locales[i];
-        message =
-            messages[targetLocale] || {};
-        if ((format = resolveValue(message, key)) === null) {
-            format = message[key];
-        }
-        if (isString$1(format) || isFunction$1(format))
-            break;
-        handleMissing(context, key, targetLocale, missingWarn, 'translate');
-    }
+    // escape params
+    escapeParameter && escapeParams(options);
+    // resolve message format
+    // eslint-disable-next-line prefer-const
+    let [format, targetLocale, message] = resolveMessageFormat(context, key, locale, fallbackLocale, fallbackWarn, missingWarn);
+    // if you use default message, set it as message format!
     let cacheBaseKey = key;
     if (!(isString$1(format) || isMessageFunction(format))) {
         if (enableDefaultMsg) {
@@ -6826,39 +7613,90 @@ function translate(context, ...args) {
             cacheBaseKey = format;
         }
     }
+    // checking message format and target locale
     if (!(isString$1(format) || isMessageFunction(format)) ||
         !isString$1(targetLocale)) {
         return unresolving ? NOT_REOSLVED : key;
     }
+    // setup compile error detecting
     let occured = false;
     const errorDetector = () => {
         occured = true;
     };
-    let msg;
-    if (!isMessageFunction(format)) {
-        msg = messageCompiler(format, getCompileOptions(targetLocale, cacheBaseKey, format, warnHtmlMessage, errorDetector));
-        msg.locale = targetLocale;
-        msg.key = key;
-        msg.source = format;
-    }
-    else {
-        msg = format;
-        msg.locale = msg.locale || targetLocale;
-        msg.key = msg.key || key;
-    }
+    // compile message format
+    const msg = compileMessasgeFormat(context, key, targetLocale, format, cacheBaseKey, errorDetector);
+    // if occured compile error, return the message format
     if (occured) {
         return format;
     }
+    // evaluate message with context
     const ctxOptions = getMessageContextOptions(context, targetLocale, message, options);
     const msgContext = createMessageContext(ctxOptions);
-    const messaged = msg(msgContext);
+    const messaged = evaluateMessage(context, msg, msgContext);
+    // if use post translation option, procee it with handler
     return postTranslation ? postTranslation(messaged) : messaged;
 }
+function escapeParams(options) {
+    if (isArray$1(options.list)) {
+        options.list = options.list.map(item => isString$1(item) ? escapeHtml(item) : item);
+    }
+    else if (isObject$1(options.named)) {
+        Object.keys(options.named).forEach(key => {
+            if (isString$1(options.named[key])) {
+                options.named[key] = escapeHtml(options.named[key]);
+            }
+        });
+    }
+}
+function resolveMessageFormat(context, key, locale, fallbackLocale, fallbackWarn, missingWarn) {
+    const { messages, onWarn } = context;
+    const locales = getLocaleChain(context, fallbackLocale, locale);
+    let message = {};
+    let targetLocale;
+    let format = null;
+    let to = null;
+    const type = 'translate';
+    for (let i = 0; i < locales.length; i++) {
+        targetLocale = to = locales[i];
+        message =
+            messages[targetLocale] || {};
+        if ((format = resolveValue(message, key)) === null) {
+            // if null, resolve with object key path
+            format = message[key]; // eslint-disable-line @typescript-eslint/no-explicit-any
+        }
+        if (isString$1(format) || isFunction$1(format))
+            break;
+        const missingRet = handleMissing(context, key, targetLocale, missingWarn, type);
+        if (missingRet !== key) {
+            format = missingRet;
+        }
+    }
+    return [format, targetLocale, message];
+}
+function compileMessasgeFormat(context, key, targetLocale, format, cacheBaseKey, errorDetector) {
+    const { messageCompiler, warnHtmlMessage } = context;
+    if (isMessageFunction(format)) {
+        const msg = format;
+        msg.locale = msg.locale || targetLocale;
+        msg.key = msg.key || key;
+        return msg;
+    }
+    const msg = messageCompiler(format, getCompileOptions(context, targetLocale, cacheBaseKey, format, warnHtmlMessage, errorDetector));
+    msg.locale = targetLocale;
+    msg.key = key;
+    msg.source = format;
+    return msg;
+}
+function evaluateMessage(context, msg, msgCtx) {
+    const messaged = msg(msgCtx);
+    return messaged;
+}
+/** @internal */
 function parseTranslateArgs(...args) {
     const [arg1, arg2, arg3] = args;
     const options = {};
     if (!isString$1(arg1)) {
-        throw createCoreError(12);
+        throw createCoreError(12 /* INVALID_ARGUMENT */);
     }
     const key = arg1;
     if (isNumber(arg2)) {
@@ -6884,7 +7722,7 @@ function parseTranslateArgs(...args) {
     }
     return [key, options];
 }
-function getCompileOptions(locale, key, source, warnHtmlMessage, errorDetector) {
+function getCompileOptions(context, locale, key, source, warnHtmlMessage, errorDetector) {
     return {
         warnHtmlMessage,
         onError: (err) => {
@@ -6897,7 +7735,7 @@ function getCompileOptions(locale, key, source, warnHtmlMessage, errorDetector) 
     };
 }
 function getMessageContextOptions(context, locale, message, options) {
-    const { modifiers, pluralRules, messageCompiler } = context;
+    const { modifiers, pluralRules } = context;
     const resolveMessage = (key) => {
         const val = resolveValue(message, key);
         if (isString$1(val)) {
@@ -6905,7 +7743,7 @@ function getMessageContextOptions(context, locale, message, options) {
             const errorDetector = () => {
                 occured = true;
             };
-            const msg = messageCompiler(val, getCompileOptions(locale, key, val, context.warnHtmlMessage, errorDetector));
+            const msg = compileMessasgeFormat(context, key, locale, val, key, errorDetector);
             return !occured
                 ? msg
                 : NOOP_MESSAGE_FUNCTION;
@@ -6914,6 +7752,7 @@ function getMessageContextOptions(context, locale, message, options) {
             return val;
         }
         else {
+            // TODO: should be implemented warning message
             return NOOP_MESSAGE_FUNCTION;
         }
     };
@@ -6938,6 +7777,8 @@ function getMessageContextOptions(context, locale, message, options) {
     return ctxOptions;
 }
 
+// implementation of `datetime` function
+/** @internal */
 function datetime(context, ...args) {
     const { datetimeFormats, unresolving, fallbackLocale, onWarn } = context;
     const { __datetimeFormatters } = context;
@@ -6954,18 +7795,22 @@ function datetime(context, ...args) {
     if (!isString$1(key) || key === '') {
         return new Intl.DateTimeFormat(locale).format(value);
     }
+    // resolve format
     let datetimeFormat = {};
     let targetLocale;
     let format = null;
+    let to = null;
+    const type = 'datetime format';
     for (let i = 0; i < locales.length; i++) {
-        targetLocale = locales[i];
+        targetLocale = to = locales[i];
         datetimeFormat =
             datetimeFormats[targetLocale] || {};
         format = datetimeFormat[key];
         if (isPlainObject$1(format))
             break;
-        handleMissing(context, key, targetLocale, missingWarn, 'datetime');
+        handleMissing(context, key, targetLocale, missingWarn, type);
     }
+    // checking format and target locale
     if (!isPlainObject$1(format) || !isString$1(targetLocale)) {
         return unresolving ? NOT_REOSLVED : key;
     }
@@ -6980,14 +7825,39 @@ function datetime(context, ...args) {
     }
     return !part ? formatter.format(value) : formatter.formatToParts(value);
 }
+/** @internal */
 function parseDateTimeArgs(...args) {
     const [arg1, arg2, arg3, arg4] = args;
     let options = {};
     let orverrides = {};
-    if (!(isNumber(arg1) || isDate$1(arg1))) {
-        throw createCoreError(12);
+    let value;
+    if (isString$1(arg1)) {
+        // Only allow ISO strings - other date formats are often supported,
+        // but may cause different results in different browsers.
+        if (!/\d{4}-\d{2}-\d{2}(T.*)?/.test(arg1)) {
+            throw createCoreError(14 /* INVALID_ISO_DATE_ARGUMENT */);
+        }
+        value = new Date(arg1);
+        try {
+            // This will fail if the date is not valid
+            value.toISOString();
+        }
+        catch (e) {
+            throw createCoreError(14 /* INVALID_ISO_DATE_ARGUMENT */);
+        }
     }
-    const value = arg1;
+    else if (isDate$1(arg1)) {
+        if (isNaN(arg1.getTime())) {
+            throw createCoreError(13 /* INVALID_DATE_ARGUMENT */);
+        }
+        value = arg1;
+    }
+    else if (isNumber(arg1)) {
+        value = arg1;
+    }
+    else {
+        throw createCoreError(12 /* INVALID_ARGUMENT */);
+    }
     if (isString$1(arg2)) {
         options.key = arg2;
     }
@@ -7005,6 +7875,7 @@ function parseDateTimeArgs(...args) {
     }
     return [options.key || '', value, options, orverrides];
 }
+/** @internal */
 function clearDateTimeFormat(ctx, locale, format) {
     const context = ctx;
     for (const key in format) {
@@ -7016,6 +7887,8 @@ function clearDateTimeFormat(ctx, locale, format) {
     }
 }
 
+// implementation of `number` function
+/** @internal */
 function number(context, ...args) {
     const { numberFormats, unresolving, fallbackLocale, onWarn } = context;
     const { __numberFormatters } = context;
@@ -7032,18 +7905,22 @@ function number(context, ...args) {
     if (!isString$1(key) || key === '') {
         return new Intl.NumberFormat(locale).format(value);
     }
+    // resolve format
     let numberFormat = {};
     let targetLocale;
     let format = null;
+    let to = null;
+    const type = 'number format';
     for (let i = 0; i < locales.length; i++) {
-        targetLocale = locales[i];
+        targetLocale = to = locales[i];
         numberFormat =
             numberFormats[targetLocale] || {};
         format = numberFormat[key];
         if (isPlainObject$1(format))
             break;
-        handleMissing(context, key, targetLocale, missingWarn, 'number');
+        handleMissing(context, key, targetLocale, missingWarn, type);
     }
+    // checking format and target locale
     if (!isPlainObject$1(format) || !isString$1(targetLocale)) {
         return unresolving ? NOT_REOSLVED : key;
     }
@@ -7058,12 +7935,13 @@ function number(context, ...args) {
     }
     return !part ? formatter.format(value) : formatter.formatToParts(value);
 }
+/** @internal */
 function parseNumberArgs(...args) {
     const [arg1, arg2, arg3, arg4] = args;
     let options = {};
     let orverrides = {};
     if (!isNumber(arg1)) {
-        throw createCoreError(12);
+        throw createCoreError(12 /* INVALID_ARGUMENT */);
     }
     const value = arg1;
     if (isString$1(arg2)) {
@@ -7083,6 +7961,7 @@ function parseNumberArgs(...args) {
     }
     return [options.key || '', value, options, orverrides];
 }
+/** @internal */
 function clearNumberFormat(ctx, locale, format) {
     const context = ctx;
     for (const key in format) {
@@ -7098,22 +7977,35 @@ function createI18nError(code, ...args) {
     return createCompileError(code, null,  undefined);
 }
 
+/**
+ *  Composer
+ *
+ *  Composer is offered composition API for Vue 3
+ *  This module is offered new style vue-i18n API
+ */
+const TransrateVNodeSymbol = makeSymbol('__transrateVNode');
+const DatetimePartsSymbol = makeSymbol('__datetimeParts');
+const NumberPartsSymbol = makeSymbol('__numberParts');
+const EnableEmitter = makeSymbol('__enableEmitter');
+const DisableEmitter = makeSymbol('__disableEmitter');
 let composerID = 0;
 function defineRuntimeMissingHandler(missing) {
     return ((ctx, locale, key, type) => {
         return missing(locale, key, getCurrentInstance() || undefined, type);
     });
 }
-function getLocaleMessages(options, locale) {
+function getLocaleMessages(locale, options) {
     const { messages, __i18n } = options;
-    let ret = isPlainObject$1(messages)
+    // prettier-ignore
+    const ret = isPlainObject$1(messages)
         ? messages
         : isArray$1(__i18n)
             ? {}
             : { [locale]: {} };
+    // merge locale messages of i18n custom block
     if (isArray$1(__i18n)) {
         __i18n.forEach(raw => {
-            ret = Object.assign(ret, isString$1(raw) ? JSON.parse(raw) : raw);
+            deepCopy(isString$1(raw) ? JSON.parse(raw) : raw, ret);
         });
         return ret;
     }
@@ -7122,6 +8014,26 @@ function getLocaleMessages(options, locale) {
         addPreCompileMessages(ret, functions);
     }
     return ret;
+}
+const hasOwnProperty$1 = Object.prototype.hasOwnProperty;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function hasOwn$1(obj, key) {
+    return hasOwnProperty$1.call(obj, key);
+}
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function deepCopy(source, destination) {
+    for (const key in source) {
+        if (hasOwn$1(source, key)) {
+            if (!isObject$1(source[key])) {
+                destination[key] = destination[key] != null ? destination[key] : {};
+                destination[key] = source[key];
+            }
+            else {
+                destination[key] = destination[key] != null ? destination[key] : {};
+                deepCopy(source[key], destination[key]);
+            }
+        }
+    }
 }
 function addPreCompileMessages(messages, functions) {
     const keys = Object.keys(functions);
@@ -7135,7 +8047,7 @@ function addPreCompileMessages(messages, functions) {
         const paths = parse(k);
         if (paths != null) {
             const len = paths.length;
-            let last = targetLocaleMessage;
+            let last = targetLocaleMessage; // eslint-disable-line @typescript-eslint/no-explicit-any
             let i = 0;
             while (i < len) {
                 const path = paths[i];
@@ -7155,18 +8067,27 @@ function addPreCompileMessages(messages, functions) {
         }
     });
 }
+/**
+ * Create composer interface factory
+ *
+ * @internal
+ */
 function createComposer(options = {}) {
     const { __root } = options;
     const _isGlobal = __root === undefined;
     let _inheritLocale = isBoolean(options.inheritLocale)
         ? options.inheritLocale
         : true;
-    const _locale = ref(__root && _inheritLocale
+    const _locale = ref(
+    // prettier-ignore
+    __root && _inheritLocale
         ? __root.locale.value
         : isString$1(options.locale)
             ? options.locale
             : 'en-US');
-    const _fallbackLocale = ref(__root && _inheritLocale
+    const _fallbackLocale = ref(
+    // prettier-ignore
+    __root && _inheritLocale
         ? __root.fallbackLocale.value
         : isString$1(options.fallbackLocale) ||
             isArray$1(options.fallbackLocale) ||
@@ -7174,18 +8095,21 @@ function createComposer(options = {}) {
             options.fallbackLocale === false
             ? options.fallbackLocale
             : _locale.value);
-    const _messages = ref(getLocaleMessages(options, _locale.value));
+    const _messages = ref(getLocaleMessages(_locale.value, options));
     const _datetimeFormats = ref(isPlainObject$1(options.datetimeFormats)
         ? options.datetimeFormats
         : { [_locale.value]: {} });
     const _numberFormats = ref(isPlainObject$1(options.numberFormats)
         ? options.numberFormats
         : { [_locale.value]: {} });
+    // warning suppress options
+    // prettier-ignore
     let _missingWarn = __root
         ? __root.missingWarn
         : isBoolean(options.missingWarn) || isRegExp(options.missingWarn)
             ? options.missingWarn
             : true;
+    // prettier-ignore
     let _fallbackWarn = __root
         ? __root.fallbackWarn
         : isBoolean(options.fallbackWarn) || isRegExp(options.fallbackWarn)
@@ -7194,23 +8118,32 @@ function createComposer(options = {}) {
     let _fallbackRoot = isBoolean(options.fallbackRoot)
         ? options.fallbackRoot
         : true;
+    // configure fall bakck to root
     let _fallbackFormat = !!options.fallbackFormat;
+    // runtime missing
     let _missing = isFunction$1(options.missing) ? options.missing : null;
     let _runtimeMissing = isFunction$1(options.missing)
         ? defineRuntimeMissingHandler(options.missing)
         : null;
+    // postTranslation handler
     let _postTranslation = isFunction$1(options.postTranslation)
         ? options.postTranslation
         : null;
     let _warnHtmlMessage = isBoolean(options.warnHtmlMessage)
         ? options.warnHtmlMessage
         : true;
+    let _escapeParameter = !!options.escapeParameter;
+    // custom linked modifiers
+    // prettier-ignore
     const _modifiers = __root
         ? __root.modifiers
         : isPlainObject$1(options.modifiers)
             ? options.modifiers
             : {};
+    // pluralRules
     const _pluralRules = options.pluralRules;
+    // runtime context
+    // eslint-disable-next-line prefer-const
     let _context;
     function getRuntimeContext() {
         return createRuntimeContext({
@@ -7228,16 +8161,24 @@ function createComposer(options = {}) {
             unresolving: true,
             postTranslation: _postTranslation === null ? undefined : _postTranslation,
             warnHtmlMessage: _warnHtmlMessage,
+            escapeParameter: _escapeParameter,
             __datetimeFormatters: isPlainObject$1(_context)
                 ? _context.__datetimeFormatters
                 : undefined,
             __numberFormatters: isPlainObject$1(_context)
                 ? _context.__numberFormatters
+                : undefined,
+            __emitter: isPlainObject$1(_context)
+                ? _context.__emitter
                 : undefined
         });
     }
     _context = getRuntimeContext();
     updateFallbackLocale(_context, _locale.value, _fallbackLocale.value);
+    /*!
+     * define properties
+     */
+    // locale
     const locale = computed$1({
         get: () => _locale.value,
         set: val => {
@@ -7245,6 +8186,7 @@ function createComposer(options = {}) {
             _context.locale = _locale.value;
         }
     });
+    // fallbackLocale
     const fallbackLocale = computed$1({
         get: () => _fallbackLocale.value,
         set: val => {
@@ -7253,19 +8195,29 @@ function createComposer(options = {}) {
             updateFallbackLocale(_context, _locale.value, val);
         }
     });
+    // messages
     const messages = computed$1(() => _messages.value);
+    // datetimeFormats
     const datetimeFormats = computed$1(() => _datetimeFormats.value);
+    // numberFormats
     const numberFormats = computed$1(() => _numberFormats.value);
+    /**
+     * define methods
+     */
+    // getPostTranslationHandler
     function getPostTranslationHandler() {
         return isFunction$1(_postTranslation) ? _postTranslation : null;
     }
+    // setPostTranslationHandler
     function setPostTranslationHandler(handler) {
         _postTranslation = handler;
         _context.postTranslation = handler;
     }
+    // getMissingHandler
     function getMissingHandler() {
         return _missing;
     }
+    // setMissingHandler
     function setMissingHandler(handler) {
         if (handler !== null) {
             _runtimeMissing = defineRuntimeMissingHandler(handler);
@@ -7274,7 +8226,8 @@ function createComposer(options = {}) {
         _context.missing = _runtimeMissing;
     }
     function wrapWithDeps(fn, argumentParser, warnType, fallbackSuccess, fallbackFail, successCondition) {
-        const ret = fn(getRuntimeContext());
+        const context = getRuntimeContext();
+        const ret = fn(context); // track reactive dependency, see the getRuntimeContext
         if (isNumber(ret) && ret === NOT_REOSLVED) {
             const key = argumentParser();
             return _fallbackRoot && __root
@@ -7285,31 +8238,38 @@ function createComposer(options = {}) {
             return ret;
         }
         else {
-            throw createI18nError(12);
+            /* istanbul ignore next */
+            throw createI18nError(12 /* UNEXPECTED_RETURN_TYPE */);
         }
     }
+    // t
     function t(...args) {
         return wrapWithDeps(context => translate(context, ...args), () => parseTranslateArgs(...args)[0], 'translate', root => root.t(...args), key => key, val => isString$1(val));
     }
+    // d
     function d(...args) {
         return wrapWithDeps(context => datetime(context, ...args), () => parseDateTimeArgs(...args)[0], 'datetime format', root => root.d(...args), () => MISSING_RESOLVE_VALUE, val => isString$1(val));
     }
+    // n
     function n(...args) {
         return wrapWithDeps(context => number(context, ...args), () => parseNumberArgs(...args)[0], 'number format', root => root.n(...args), () => MISSING_RESOLVE_VALUE, val => isString$1(val));
     }
+    // for custom processor
     function normalize(values) {
         return values.map(val => isString$1(val) ? createVNode(Text, null, val, 0) : val);
     }
     const interpolate = (val) => val;
     const processor = {
         normalize,
-        interpolate
+        interpolate,
+        type: 'vnode'
     };
+    // __transrateVNode, using for `i18n-t` component
     function __transrateVNode(...args) {
         return wrapWithDeps(context => {
             let ret;
+            const _context = context;
             try {
-                const _context = context;
                 _context.processor = processor;
                 ret = translate(_context, ...args);
             }
@@ -7317,61 +8277,88 @@ function createComposer(options = {}) {
                 _context.processor = null;
             }
             return ret;
-        }, () => parseTranslateArgs(...args)[0], 'translate', root => root.__transrateVNode(...args), key => [createVNode(Text, null, key, 0)], val => isArray$1(val));
+        }, () => parseTranslateArgs(...args)[0], 'translate', 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        root => root[TransrateVNodeSymbol](...args), key => [createVNode(Text, null, key, 0)], val => isArray$1(val));
     }
+    // __numberParts, using for `i18n-n` component
     function __numberParts(...args) {
-        return wrapWithDeps(context => number(context, ...args), () => parseNumberArgs(...args)[0], 'number format', root => root.__numberParts(...args), () => [], val => isString$1(val) || isArray$1(val));
+        return wrapWithDeps(context => number(context, ...args), () => parseNumberArgs(...args)[0], 'number format', 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        root => root[NumberPartsSymbol](...args), () => [], val => isString$1(val) || isArray$1(val));
     }
+    // __datetimeParts, using for `i18n-d` component
     function __datetimeParts(...args) {
-        return wrapWithDeps(context => datetime(context, ...args), () => parseDateTimeArgs(...args)[0], 'datetime format', root => root.__datetimeParts(...args), () => [], val => isString$1(val) || isArray$1(val));
+        return wrapWithDeps(context => datetime(context, ...args), () => parseDateTimeArgs(...args)[0], 'datetime format', 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        root => root[DatetimePartsSymbol](...args), () => [], val => isString$1(val) || isArray$1(val));
     }
+    // te
+    function te(key, locale) {
+        const targetLocale = isString$1(locale) ? locale : _locale.value;
+        const message = getLocaleMessage(targetLocale);
+        return resolveValue(message, key) !== null;
+    }
+    // tm
     function tm(key) {
         const messages = _messages.value[_locale.value] || {};
         const target = resolveValue(messages, key);
+        // prettier-ignore
         return target != null
             ? target
             : __root
                 ? __root.tm(key) || {}
                 : {};
     }
+    // getLocaleMessage
     function getLocaleMessage(locale) {
         return (_messages.value[locale] || {});
     }
+    // setLocaleMessage
     function setLocaleMessage(locale, message) {
         _messages.value[locale] = message;
         _context.messages = _messages.value;
     }
+    // mergeLocaleMessage
     function mergeLocaleMessage(locale, message) {
         _messages.value[locale] = Object.assign(_messages.value[locale] || {}, message);
         _context.messages = _messages.value;
     }
+    // getDateTimeFormat
     function getDateTimeFormat(locale) {
         return _datetimeFormats.value[locale] || {};
     }
+    // setDateTimeFormat
     function setDateTimeFormat(locale, format) {
         _datetimeFormats.value[locale] = format;
         _context.datetimeFormats = _datetimeFormats.value;
         clearDateTimeFormat(_context, locale, format);
     }
+    // mergeDateTimeFormat
     function mergeDateTimeFormat(locale, format) {
         _datetimeFormats.value[locale] = Object.assign(_datetimeFormats.value[locale] || {}, format);
         _context.datetimeFormats = _datetimeFormats.value;
         clearDateTimeFormat(_context, locale, format);
     }
+    // getNumberFormat
     function getNumberFormat(locale) {
         return _numberFormats.value[locale] || {};
     }
+    // setNumberFormat
     function setNumberFormat(locale, format) {
         _numberFormats.value[locale] = format;
         _context.numberFormats = _numberFormats.value;
         clearNumberFormat(_context, locale, format);
     }
+    // mergeNumberFormat
     function mergeNumberFormat(locale, format) {
         _numberFormats.value[locale] = Object.assign(_numberFormats.value[locale] || {}, format);
         _context.numberFormats = _numberFormats.value;
         clearNumberFormat(_context, locale, format);
     }
+    // for debug
     composerID++;
+    // watch root locale & fallbackLocale
     if (__root) {
         watch(__root.locale, (val) => {
             if (_inheritLocale) {
@@ -7388,7 +8375,10 @@ function createComposer(options = {}) {
             }
         });
     }
+    // export composition API!
     const composer = {
+        // properties
+        id: composerID,
         locale,
         fallbackLocale,
         get inheritLocale() {
@@ -7412,7 +8402,7 @@ function createComposer(options = {}) {
             return _modifiers;
         },
         get pluralRules() {
-            return _pluralRules;
+            return _pluralRules || {};
         },
         get isGlobal() {
             return _isGlobal;
@@ -7451,10 +8441,18 @@ function createComposer(options = {}) {
             _warnHtmlMessage = val;
             _context.warnHtmlMessage = val;
         },
-        __id: composerID,
+        get escapeParameter() {
+            return _escapeParameter;
+        },
+        set escapeParameter(val) {
+            _escapeParameter = val;
+            _context.escapeParameter = val;
+        },
+        // methods
         t,
         d,
         n,
+        te,
         tm,
         getLocaleMessage,
         setLocaleMessage,
@@ -7469,13 +8467,23 @@ function createComposer(options = {}) {
         setPostTranslationHandler,
         getMissingHandler,
         setMissingHandler,
-        __transrateVNode,
-        __numberParts,
-        __datetimeParts
+        [TransrateVNodeSymbol]: __transrateVNode,
+        [NumberPartsSymbol]: __numberParts,
+        [DatetimePartsSymbol]: __datetimeParts
     };
     return composer;
 }
 
+/**
+ *  Legacy
+ *
+ *  This module is offered legacy vue-i18n API compatibility
+ */
+/**
+ * Convert to I18n Composer Options from VueI18n Options
+ *
+ * @internal
+ */
 function convertComposerOptions(options) {
     const locale = isString$1(options.locale) ? options.locale : 'en-US';
     const fallbackLocale = isString$1(options.fallbackLocale) ||
@@ -7497,6 +8505,7 @@ function convertComposerOptions(options) {
         ? options.fallbackRoot
         : true;
     const fallbackFormat = !!options.formatFallbackMessages;
+    const modifiers = isPlainObject$1(options.modifiers) ? options.modifiers : {};
     const pluralizationRules = options.pluralizationRules;
     const postTranslation = isFunction$1(options.postTranslation)
         ? options.postTranslation
@@ -7504,6 +8513,7 @@ function convertComposerOptions(options) {
     const warnHtmlMessage = isString$1(options.warnHtmlInMessage)
         ? options.warnHtmlInMessage !== 'off'
         : true;
+    const escapeParameter = !!options.escapeParameterHtml;
     const inheritLocale = isBoolean(options.sync) ? options.sync : true;
     let messages = options.messages;
     if (isPlainObject$1(options.sharedMessages)) {
@@ -7529,42 +8539,63 @@ function convertComposerOptions(options) {
         fallbackWarn,
         fallbackRoot,
         fallbackFormat,
+        modifiers,
         pluralRules: pluralizationRules,
         postTranslation,
         warnHtmlMessage,
+        escapeParameter,
         inheritLocale,
         __i18n,
         __root
     };
 }
+/**
+ * create VueI18n interface factory
+ *
+ * @internal
+ */
 function createVueI18n(options = {}) {
     const composer = createComposer(convertComposerOptions(options));
+    // defines VueI18n
     const vueI18n = {
+        /**
+         * properties
+         */
+        // id
+        id: composer.id,
+        // locale
         get locale() {
             return composer.locale.value;
         },
         set locale(val) {
             composer.locale.value = val;
         },
+        // fallbackLocale
         get fallbackLocale() {
             return composer.fallbackLocale.value;
         },
         set fallbackLocale(val) {
             composer.fallbackLocale.value = val;
         },
+        // messages
         get messages() {
             return composer.messages.value;
         },
+        // datetimeFormats
         get datetimeFormats() {
             return composer.datetimeFormats.value;
         },
+        // numberFormats
         get numberFormats() {
             return composer.numberFormats.value;
         },
+        // availableLocales
         get availableLocales() {
             return composer.availableLocales;
         },
+        // formatter
         get formatter() {
+            // dummy
             return {
                 interpolate() {
                     return [];
@@ -7573,12 +8604,14 @@ function createVueI18n(options = {}) {
         },
         set formatter(val) {
         },
+        // missing
         get missing() {
             return composer.getMissingHandler();
         },
         set missing(handler) {
             composer.setMissingHandler(handler);
         },
+        // silentTranslationWarn
         get silentTranslationWarn() {
             return isBoolean(composer.missingWarn)
                 ? !composer.missingWarn
@@ -7587,6 +8620,7 @@ function createVueI18n(options = {}) {
         set silentTranslationWarn(val) {
             composer.missingWarn = isBoolean(val) ? !val : val;
         },
+        // silentFallbackWarn
         get silentFallbackWarn() {
             return isBoolean(composer.fallbackWarn)
                 ? !composer.fallbackWarn
@@ -7595,44 +8629,68 @@ function createVueI18n(options = {}) {
         set silentFallbackWarn(val) {
             composer.fallbackWarn = isBoolean(val) ? !val : val;
         },
+        // modifiers
+        get modifiers() {
+            return composer.modifiers;
+        },
+        // formatFallbackMessages
         get formatFallbackMessages() {
             return composer.fallbackFormat;
         },
         set formatFallbackMessages(val) {
             composer.fallbackFormat = val;
         },
+        // postTranslation
         get postTranslation() {
             return composer.getPostTranslationHandler();
         },
         set postTranslation(handler) {
             composer.setPostTranslationHandler(handler);
         },
+        // sync
         get sync() {
             return composer.inheritLocale;
         },
         set sync(val) {
             composer.inheritLocale = val;
         },
+        // warnInHtmlMessage
         get warnHtmlInMessage() {
             return composer.warnHtmlMessage ? 'warn' : 'off';
         },
         set warnHtmlInMessage(val) {
             composer.warnHtmlMessage = val !== 'off';
         },
+        // escapeParameterHtml
+        get escapeParameterHtml() {
+            return composer.escapeParameter;
+        },
+        set escapeParameterHtml(val) {
+            composer.escapeParameter = val;
+        },
+        // preserveDirectiveContent
         get preserveDirectiveContent() {
             return true;
         },
         set preserveDirectiveContent(val) {
         },
-        __id: composer.__id,
+        // pluralizationRules
+        get pluralizationRules() {
+            return composer.pluralRules || {};
+        },
+        // for internal
         __composer: composer,
+        /**
+         * methods
+         */
+        // t
         t(...args) {
             const [arg1, arg2, arg3] = args;
             const options = {};
             let list = null;
             let named = null;
             if (!isString$1(arg1)) {
-                throw createI18nError(13);
+                throw createI18nError(13 /* INVALID_ARGUMENT */);
             }
             const key = arg1;
             if (isString$1(arg2)) {
@@ -7652,13 +8710,14 @@ function createVueI18n(options = {}) {
             }
             return composer.t(key, list || named || {}, options);
         },
+        // tc
         tc(...args) {
             const [arg1, arg2, arg3] = args;
             const options = { plural: 1 };
             let list = null;
             let named = null;
             if (!isString$1(arg1)) {
-                throw createI18nError(13);
+                throw createI18nError(13 /* INVALID_ARGUMENT */);
             }
             const key = arg1;
             if (isString$1(arg2)) {
@@ -7684,50 +8743,64 @@ function createVueI18n(options = {}) {
             }
             return composer.t(key, list || named || {}, options);
         },
+        // te
         te(key, locale) {
-            const targetLocale = isString$1(locale) ? locale : composer.locale.value;
-            const message = composer.getLocaleMessage(targetLocale);
-            return resolveValue(message, key) !== null;
+            return composer.te(key, locale);
         },
+        // tm
         tm(key) {
             return composer.tm(key);
         },
+        // getLocaleMessage
         getLocaleMessage(locale) {
             return composer.getLocaleMessage(locale);
         },
+        // setLocaleMessage
         setLocaleMessage(locale, message) {
             composer.setLocaleMessage(locale, message);
         },
+        // mergeLocaleMessasge
         mergeLocaleMessage(locale, message) {
             composer.mergeLocaleMessage(locale, message);
         },
+        // d
         d(...args) {
             return composer.d(...args);
         },
+        // getDateTimeFormat
         getDateTimeFormat(locale) {
             return composer.getDateTimeFormat(locale);
         },
+        // setDateTimeFormat
         setDateTimeFormat(locale, format) {
             composer.setDateTimeFormat(locale, format);
         },
+        // mergeDateTimeFormat
         mergeDateTimeFormat(locale, format) {
             composer.mergeDateTimeFormat(locale, format);
         },
+        // n
         n(...args) {
             return composer.n(...args);
         },
+        // getNumberFormat
         getNumberFormat(locale) {
             return composer.getNumberFormat(locale);
         },
+        // setNumberFormat
         setNumberFormat(locale, format) {
             composer.setNumberFormat(locale, format);
         },
+        // mergeNumberFormat
         mergeNumberFormat(locale, format) {
             composer.mergeNumberFormat(locale, format);
         },
+        // getChoiceIndex
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         getChoiceIndex(choice, choicesLength) {
             return -1;
         },
+        // for internal
         __onComponentInstanceCreated(target) {
             const { componentInstanceCreatedListener } = options;
             if (componentInstanceCreatedListener) {
@@ -7752,7 +8825,57 @@ const baseFormatProps = {
     }
 };
 
+/**
+ * Translation Component
+ *
+ * @remarks
+ * See the following items for property about details
+ *
+ * @VueI18nSee [TranslationProps](component#translationprops)
+ * @VueI18nSee [BaseFormatProps](component#baseformatprops)
+ * @VueI18nSee [Component Interpolation](../advanced/component)
+ *
+ * @example
+ * ```html
+ * <div id="app">
+ *   <!-- ... -->
+ *   <i18n path="term" tag="label" for="tos">
+ *     <a :href="url" target="_blank">{{ $t('tos') }}</a>
+ *   </i18n>
+ *   <!-- ... -->
+ * </div>
+ * ```
+ * ```js
+ * import { createApp } from 'vue'
+ * import { createI18n } from 'vue-i18n'
+ *
+ * const messages = {
+ *   en: {
+ *     tos: 'Term of Service',
+ *     term: 'I accept xxx {0}.'
+ *   },
+ *   ja: {
+ *     tos: '利用規約',
+ *     term: '私は xxx の{0}に同意します。'
+ *   }
+ * }
+ *
+ * const i18n = createI18n({
+ *   locale: 'en',
+ *   messages
+ * })
+ *
+ * const app = createApp({
+ *   data: {
+ *     url: '/term'
+ *   }
+ * }).use(i18n).mount('#app')
+ * ```
+ *
+ * @VueI18nComponent
+ */
 const Translation = {
+    /* eslint-disable */
     name: 'i18n-t',
     props: {
         ...baseFormatProps,
@@ -7762,9 +8885,11 @@ const Translation = {
         },
         plural: {
             type: [Number, String],
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             validator: (val) => isNumber(val) || !isNaN(val)
         }
     },
+    /* eslint-enable */
     setup(props, context) {
         const { slots, attrs } = context;
         const i18n = useI18n({ useScope: props.scope });
@@ -7778,7 +8903,9 @@ const Translation = {
                 options.plural = isString$1(props.plural) ? +props.plural : props.plural;
             }
             const arg = getInterpolateArg(context, keys);
-            const children = i18n.__transrateVNode(props.keypath, arg, options);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const children = i18n[TransrateVNodeSymbol](props.keypath, arg, options);
+            // prettier-ignore
             return isString$1(props.tag)
                 ? h(props.tag, { ...attrs }, children)
                 : isObject$1(props.tag)
@@ -7789,9 +8916,11 @@ const Translation = {
 };
 function getInterpolateArg({ slots }, keys) {
     if (keys.length === 1 && keys[0] === 'default') {
+        // default slot only
         return slots.default ? slots.default() : [];
     }
     else {
+        // named slots
         return keys.reduce((arg, key) => {
             const slot = slots[key];
             if (slot) {
@@ -7814,12 +8943,15 @@ function renderFormatter(props, context, slotKeys, partFormatter) {
             options.key = props.format;
         }
         else if (isObject$1(props.format)) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             if (isString$1(props.format.key)) {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 options.key = props.format.key;
             }
+            // Filter out number format options only
             orverrides = Object.keys(props.format).reduce((options, prop) => {
                 return slotKeys.includes(prop)
-                    ? Object.assign({}, options, { [prop]: props.format[prop] })
+                    ? Object.assign({}, options, { [prop]: props.format[prop] }) // eslint-disable-line @typescript-eslint/no-explicit-any
                     : options;
             }, {});
         }
@@ -7836,6 +8968,7 @@ function renderFormatter(props, context, slotKeys, partFormatter) {
         else if (isString$1(parts)) {
             children = [parts];
         }
+        // prettier-ignore
         return isString$1(props.tag)
             ? h(props.tag, { ...attrs }, children)
             : isObject$1(props.tag)
@@ -7861,7 +8994,25 @@ const NUMBER_FORMAT_KEYS = [
     'notation',
     'formatMatcher'
 ];
+/**
+ * Number Format Component
+ *
+ * @remarks
+ * See the following items for property about details
+ *
+ * @VueI18nSee [FormattableProps](component#formattableprops)
+ * @VueI18nSee [BaseFormatProps](component#baseformatprops)
+ * @VueI18nSee [Custom Formatting](../essentials/number#custom-formatting)
+ *
+ * @VueI18nDanger
+ * Not supported IE, due to no support `Intl.NumberForamt#formatToParts` in [IE](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Intl/NumberFormat/formatToParts)
+ *
+ * If you want to use it, you need to use [polyfill](https://github.com/formatjs/formatjs/tree/main/packages/intl-numberformat)
+ *
+ * @VueI18nComponent
+ */
 const NumberFormat = {
+    /* eslint-disable */
     name: 'i18n-n',
     props: {
         ...baseFormatProps,
@@ -7873,9 +9024,12 @@ const NumberFormat = {
             type: [String, Object]
         }
     },
+    /* eslint-enable */
     setup(props, context) {
         const i18n = useI18n({ useScope: 'parent' });
-        return renderFormatter(props, context, NUMBER_FORMAT_KEYS, (...args) => i18n.__numberParts(...args));
+        return renderFormatter(props, context, NUMBER_FORMAT_KEYS, (...args) => 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        i18n[NumberPartsSymbol](...args));
     }
 };
 
@@ -7901,7 +9055,25 @@ const DATETIME_FORMAT_KEYS = [
     'second',
     'timeZoneName'
 ];
+/**
+ * Datetime Format Component
+ *
+ * @remarks
+ * See the following items for property about details
+ *
+ * @VueI18nSee [FormattableProps](component#formattableprops)
+ * @VueI18nSee [BaseFormatProps](component#baseformatprops)
+ * @VueI18nSee [Custom Formatting](../essentials/datetime#custom-formatting)
+ *
+ * @VueI18nDanger
+ * Not supported IE, due to no support `Intl.DateTimeForamt#formatToParts` in [IE](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Intl/DateTimeFormat/formatToParts)
+ *
+ * If you want to use it, you need to use [polyfill](https://github.com/formatjs/formatjs/tree/main/packages/intl-datetimeformat)
+ *
+ * @VueI18nComponent
+ */
 const DatetimeFormat = {
+    /* eslint-disable */
     name: 'i18n-d',
     props: {
         ...baseFormatProps,
@@ -7913,33 +9085,34 @@ const DatetimeFormat = {
             type: [String, Object]
         }
     },
+    /* eslint-enable */
     setup(props, context) {
         const i18n = useI18n({ useScope: 'parent' });
-        return renderFormatter(props, context, DATETIME_FORMAT_KEYS, (...args) => i18n.__datetimeParts(...args));
+        return renderFormatter(props, context, DATETIME_FORMAT_KEYS, (...args) => 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        i18n[DatetimePartsSymbol](...args));
     }
 };
 
 function getComposer(i18n, instance) {
     const i18nInternal = i18n;
-    if (i18n.mode === 'composable') {
+    if (i18n.mode === 'composition') {
         return (i18nInternal.__getInstance(instance) || i18n.global);
     }
     else {
         const vueI18n = i18nInternal.__getInstance(instance);
-        return (vueI18n != null
+        return vueI18n != null
             ? vueI18n.__composer
-            : i18n.global);
+            : i18n.global.__composer;
     }
 }
 function vTDirective(i18n) {
     const bind = (el, { instance, value, modifiers }) => {
+        /* istanbul ignore if */
         if (!instance || !instance.$) {
-            throw createI18nError(15);
+            throw createI18nError(20 /* UNEXPECTED_ERROR */);
         }
         const composer = getComposer(i18n, instance.$);
-        if (!composer) {
-            throw createI18nError(19);
-        }
         const parsedValue = parseValue(value);
         el.textContent = composer.t(...makeParams(parsedValue));
     };
@@ -7954,12 +9127,12 @@ function parseValue(value) {
     }
     else if (isPlainObject$1(value)) {
         if (!('path' in value)) {
-            throw createI18nError(17, 'path');
+            throw createI18nError(17 /* REQUIRED_VALUE */, 'path');
         }
         return value;
     }
     else {
-        throw createI18nError(18);
+        throw createI18nError(18 /* INVALID_VALUE */);
     }
 }
 function makeParams(value) {
@@ -7987,24 +9160,64 @@ function apply(app, i18n, ...options) {
         ? pluginOptions.globalInstall
         : true;
     if (globalInstall) {
+        // install components
         app.component(!useI18nComponentName ? Translation.name : 'i18n', Translation);
         app.component(NumberFormat.name, NumberFormat);
         app.component(DatetimeFormat.name, DatetimeFormat);
     }
+    // install directive
     app.directive('t', vTDirective(i18n));
-    if (!app.__VUE_I18N_SYMBOL__) {
-        throw createI18nError(15);
-    }
-    app.provide(app.__VUE_I18N_SYMBOL__, i18n);
 }
 
+/**
+ * Event emitter, forked from the below:
+ * - original repository url: https://github.com/developit/mitt
+ * - code url: https://github.com/developit/mitt/blob/master/src/index.ts
+ * - author: Jason Miller (https://github.com/developit)
+ * - license: MIT
+ */
+/**
+ * Create a event emitter
+ *
+ * @returns An event emitter
+ */
+function createEmitter() {
+    const events = new Map();
+    const emitter = {
+        events,
+        on(event, handler) {
+            const handlers = events.get(event);
+            const added = handlers && handlers.push(handler);
+            if (!added) {
+                events.set(event, [handler]);
+            }
+        },
+        off(event, handler) {
+            const handlers = events.get(event);
+            if (handlers) {
+                handlers.splice(handlers.indexOf(handler) >>> 0, 1);
+            }
+        },
+        emit(event, payload) {
+            (events.get(event) || [])
+                .slice()
+                .map(handler => handler(payload));
+            (events.get('*') || [])
+                .slice()
+                .map(handler => handler(event, payload));
+        }
+    };
+    return emitter;
+}
+
+// supports compatibility for legacy vue-i18n APIs
 function defineMixin(vuei18n, composer, i18n) {
-    const legacy = vuei18n;
     return {
         beforeCreate() {
             const instance = getCurrentInstance();
+            /* istanbul ignore if */
             if (!instance) {
-                throw createI18nError(15);
+                throw createI18nError(20 /* UNEXPECTED_ERROR */);
             }
             const options = this.$options;
             if (options.i18n) {
@@ -8013,21 +9226,31 @@ function defineMixin(vuei18n, composer, i18n) {
                     optionsI18n.__i18n = options.__i18n;
                 }
                 optionsI18n.__root = composer;
-                this.$i18n = createVueI18n(optionsI18n);
-                legacy.__onComponentInstanceCreated(this.$i18n);
-                i18n.__setInstance(instance, this.$i18n);
+                if (this === this.$root) {
+                    this.$i18n = mergeToRoot(vuei18n, optionsI18n);
+                }
+                else {
+                    this.$i18n = createVueI18n(optionsI18n);
+                }
             }
             else if (options.__i18n) {
-                this.$i18n = createVueI18n({
-                    __i18n: options.__i18n,
-                    __root: composer
-                });
-                legacy.__onComponentInstanceCreated(this.$i18n);
-                i18n.__setInstance(instance, this.$i18n);
+                if (this === this.$root) {
+                    this.$i18n = mergeToRoot(vuei18n, options);
+                }
+                else {
+                    this.$i18n = createVueI18n({
+                        __i18n: options.__i18n,
+                        __root: composer
+                    });
+                }
             }
             else {
-                this.$i18n = legacy;
+                // set global
+                this.$i18n = vuei18n;
             }
+            vuei18n.__onComponentInstanceCreated(this.$i18n);
+            i18n.__setInstance(instance, this.$i18n);
+            // defines vue-i18n legacy APIs
             this.$t = (...args) => this.$i18n.t(...args);
             this.$tc = (...args) => this.$i18n.tc(...args);
             this.$te = (key, locale) => this.$i18n.te(key, locale);
@@ -8036,16 +9259,29 @@ function defineMixin(vuei18n, composer, i18n) {
             this.$tm = (key) => this.$i18n.tm(key);
         },
         mounted() {
-            if ( __INTLIFY_PROD_DEVTOOLS__) {
+            /* istanbul ignore if */
+            if (( __INTLIFY_PROD_DEVTOOLS__) && !false) {
                 this.$el.__INTLIFY__ = this.$i18n.__composer;
+                const emitter = (this.__emitter = createEmitter());
+                const _vueI18n = this.$i18n;
+                _vueI18n.__enableEmitter && _vueI18n.__enableEmitter(emitter);
+                emitter.on('*', addTimelineEvent);
             }
         },
-        beforeDestroy() {
+        beforeUnmount() {
             const instance = getCurrentInstance();
+            /* istanbul ignore if */
             if (!instance) {
-                throw createI18nError(15);
+                throw createI18nError(20 /* UNEXPECTED_ERROR */);
             }
-            if ( __INTLIFY_PROD_DEVTOOLS__) {
+            /* istanbul ignore if */
+            if (( __INTLIFY_PROD_DEVTOOLS__) && !false) {
+                if (this.__emitter) {
+                    this.__emitter.off('*', addTimelineEvent);
+                    delete this.__emitter;
+                }
+                const _vueI18n = this.$i18n;
+                _vueI18n.__disableEmitter && _vueI18n.__disableEmitter();
                 delete this.$el.__INTLIFY__;
             }
             delete this.$t;
@@ -8059,63 +9295,300 @@ function defineMixin(vuei18n, composer, i18n) {
         }
     };
 }
+function mergeToRoot(root, optoins) {
+    root.locale = optoins.locale || root.locale;
+    root.fallbackLocale = optoins.fallbackLocale || root.fallbackLocale;
+    root.missing = optoins.missing || root.missing;
+    root.silentTranslationWarn =
+        optoins.silentTranslationWarn || root.silentFallbackWarn;
+    root.silentFallbackWarn =
+        optoins.silentFallbackWarn || root.silentFallbackWarn;
+    root.formatFallbackMessages =
+        optoins.formatFallbackMessages || root.formatFallbackMessages;
+    root.postTranslation = optoins.postTranslation || root.postTranslation;
+    root.warnHtmlInMessage = optoins.warnHtmlInMessage || root.warnHtmlInMessage;
+    root.escapeParameterHtml =
+        optoins.escapeParameterHtml || root.escapeParameterHtml;
+    root.sync = optoins.sync || root.sync;
+    const messages = getLocaleMessages(root.locale, {
+        messages: optoins.messages,
+        __i18n: optoins.__i18n
+    });
+    Object.keys(messages).forEach(locale => root.mergeLocaleMessage(locale, messages[locale]));
+    if (optoins.datetimeFormats) {
+        Object.keys(optoins.datetimeFormats).forEach(locale => root.mergeDateTimeFormat(locale, optoins.datetimeFormats[locale]));
+    }
+    if (optoins.numberFormats) {
+        Object.keys(optoins.numberFormats).forEach(locale => root.mergeNumberFormat(locale, optoins.numberFormats[locale]));
+    }
+    return root;
+}
 
+/**
+ * Vue I18n factory
+ *
+ * @param options - An options, see the {@link I18nOptions}
+ *
+ * @returns {@link I18n} instance
+ *
+ * @remarks
+ * If you use Legacy API mode, you need toto specify {@link VueI18nOptions} and `legacy: true` option.
+ *
+ * If you use composition API mode, you need to specify {@link ComposerOptions}.
+ *
+ * @VueI18nSee [Getting Started](../essentials/started)
+ * @VueI18nSee [Composition API](../advanced/composition)
+ *
+ * @example
+ * case: for Legacy API
+ * ```js
+ * import { createApp } from 'vue'
+ * import { createI18n } from 'vue-i18n'
+ *
+ * // call with I18n option
+ * const i18n = createI18n({
+ *   locale: 'ja',
+ *   messages: {
+ *     en: { ... },
+ *     ja: { ... }
+ *   }
+ * })
+ *
+ * const App = {
+ *   // ...
+ * }
+ *
+ * const app = createApp(App)
+ *
+ * // install!
+ * app.use(i18n)
+ * app.mount('#app')
+ * ```
+ *
+ * @example
+ * case: for composition API
+ * ```js
+ * import { createApp } from 'vue'
+ * import { createI18n, useI18n } from 'vue-i18n'
+ *
+ * // call with I18n option
+ * const i18n = createI18n({
+ *   legacy: false, // you must specify 'lagacy: false' option
+ *   locale: 'ja',
+ *   messages: {
+ *     en: { ... },
+ *     ja: { ... }
+ *   }
+ * })
+ *
+ * const App = {
+ *   setup() {
+ *     // ...
+ *     const { t } = useI18n({ ... })
+ *     return { ... , t }
+ *   }
+ * }
+ *
+ * const app = createApp(App)
+ *
+ * // install!
+ * app.use(i18n)
+ * app.mount('#app')
+ * ```
+ *
+ * @VueI18nGeneral
+ */
 function createI18n(options = {}) {
-    const __legacyMode = !!options.legacy;
+    // prettier-ignore
+    const __legacyMode = __VUE_I18N_LEGACY_API__ && isBoolean(options.legacy)
+        ? options.legacy
+        : true;
+    const __globalInjection = !!options.globalInjection;
     const __instances = new Map();
-    const __global = __legacyMode
+    // prettier-ignore
+    const __global = __VUE_I18N_LEGACY_API__ && __legacyMode
         ? createVueI18n(options)
         : createComposer(options);
-    const symbol = Symbol( '');
+    const symbol = makeSymbol( '');
     const i18n = {
+        // mode
         get mode() {
-            return __legacyMode ? 'legacy' : 'composable';
+            // prettier-ignore
+            return __VUE_I18N_LEGACY_API__
+                ? __legacyMode
+                    ? 'legacy'
+                    : 'composition'
+                : 'composition';
         },
-        install(app, ...options) {
-            if ( __INTLIFY_PROD_DEVTOOLS__) {
+        // install plugin
+        async install(app, ...options) {
+            if (( __INTLIFY_PROD_DEVTOOLS__) && !false) {
                 app.__VUE_I18N__ = i18n;
             }
+            // setup global provider
             app.__VUE_I18N_SYMBOL__ = symbol;
-            apply(app, i18n, ...options);
-            if (__legacyMode) {
+            app.provide(app.__VUE_I18N_SYMBOL__, i18n);
+            // global method and properties injection for Composition API
+            if (!__legacyMode && __globalInjection) {
+                injectGlobalFields(app, i18n.global);
+            }
+            // install built-in components and directive
+            if (__VUE_I18N_FULL_INSTALL__) {
+                apply(app, i18n, ...options);
+            }
+            // setup mixin for Legacy API
+            if (__VUE_I18N_LEGACY_API__ && __legacyMode) {
                 app.mixin(defineMixin(__global, __global.__composer, i18n));
             }
+            // setup vue-devtools plugin
+            if (( __INTLIFY_PROD_DEVTOOLS__) && !false) {
+                const ret = await enableDevTools(app, i18n);
+                if (!ret) {
+                    throw createI18nError(19 /* CANNOT_SETUP_VUE_DEVTOOLS_PLUGIN */);
+                }
+                const emitter = createEmitter();
+                if (__legacyMode) {
+                    const _vueI18n = __global;
+                    _vueI18n.__enableEmitter && _vueI18n.__enableEmitter(emitter);
+                }
+                else {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const _composer = __global;
+                    _composer[EnableEmitter] && _composer[EnableEmitter](emitter);
+                }
+                emitter.on('*', addTimelineEvent);
+            }
         },
+        // global accsessor
         get global() {
-            return __legacyMode
-                ? __global.__composer
-                : __global;
+            return __global;
         },
+        // @internal
         __instances,
+        // @internal
         __getInstance(component) {
             return __instances.get(component) || null;
         },
+        // @internal
         __setInstance(component, instance) {
             __instances.set(component, instance);
         },
+        // @internal
         __deleteInstance(component) {
             __instances.delete(component);
         }
     };
-    if ( __INTLIFY_PROD_DEVTOOLS__) ;
+    if (( __INTLIFY_PROD_DEVTOOLS__) && !false) ;
     return i18n;
 }
+/**
+ * Use Composition API for Vue I18n
+ *
+ * @param options - An options, see {@link UseI18nOptions}
+ *
+ * @returns {@link Composer} instance
+ *
+ * @remarks
+ * This function is mainly used by `setup`.
+ *
+ * If options are specified, Composer instance is created for each component and you can be localized on the component.
+ *
+ * If options are not specified, you can be localized using the global Composer.
+ *
+ * @example
+ * case: Component resource base localization
+ * ```html
+ * <template>
+ *   <form>
+ *     <label>{{ t('language') }}</label>
+ *     <select v-model="locale">
+ *       <option value="en">en</option>
+ *       <option value="ja">ja</option>
+ *     </select>
+ *   </form>
+ *   <p>message: {{ t('hello') }}</p>
+ * </template>
+ *
+ * <script>
+ * import { useI18n } from 'vue-i18n'
+ *
+ * export default {
+ *  setup() {
+ *    const { t, locale } = useI18n({
+ *      locale: 'ja',
+ *      messages: {
+ *        en: { ... },
+ *        ja: { ... }
+ *      }
+ *    })
+ *    // Something to do ...
+ *
+ *    return { ..., t, locale }
+ *  }
+ * }
+ * </script>
+ * ```
+ *
+ * @VueI18nComposition
+ */
 function useI18n(options = {}) {
     const instance = getCurrentInstance();
-    if (instance == null || !instance.appContext.app.__VUE_I18N_SYMBOL__) {
-        throw createI18nError(15);
+    if (instance == null) {
+        throw createI18nError(14 /* MUST_BE_CALL_SETUP_TOP */);
+    }
+    if (!instance.appContext.app.__VUE_I18N_SYMBOL__) {
+        throw createI18nError(15 /* NOT_INSLALLED */);
     }
     const i18n = inject(instance.appContext.app.__VUE_I18N_SYMBOL__);
+    /* istanbul ignore if */
     if (!i18n) {
-        throw createI18nError(14);
+        throw createI18nError(20 /* UNEXPECTED_ERROR */);
     }
-    const global = i18n.global;
+    // prettier-ignore
+    const global = i18n.mode === 'composition'
+        ? i18n.global
+        : i18n.global.__composer;
+    // prettier-ignore
     const scope = isEmptyObject(options)
-        ? 'global'
+        ? ('__i18n' in instance.type)
+            ? 'local'
+            : 'global'
         : !options.useScope
             ? 'local'
             : options.useScope;
     if (scope === 'global') {
+        let messages = isObject$1(options.messages) ? options.messages : {};
+        if ('__i18nGlobal' in instance.type) {
+            messages = getLocaleMessages(global.locale.value, {
+                messages,
+                __i18n: instance.type.__i18nGlobal
+            });
+        }
+        // merge locale messages
+        const locales = Object.keys(messages);
+        if (locales.length) {
+            locales.forEach(locale => {
+                global.mergeLocaleMessage(locale, messages[locale]);
+            });
+        }
+        // merge datetime formats
+        if (isObject$1(options.datetimeFormats)) {
+            const locales = Object.keys(options.datetimeFormats);
+            if (locales.length) {
+                locales.forEach(locale => {
+                    global.mergeDateTimeFormat(locale, options.datetimeFormats[locale]);
+                });
+            }
+        }
+        // merge number formats
+        if (isObject$1(options.numberFormats)) {
+            const locales = Object.keys(options.numberFormats);
+            if (locales.length) {
+                locales.forEach(locale => {
+                    global.mergeNumberFormat(locale, options.numberFormats[locale]);
+                });
+            }
+        }
         return global;
     }
     if (scope === 'parent') {
@@ -8125,8 +9598,9 @@ function useI18n(options = {}) {
         }
         return composer;
     }
+    // scope 'local' case
     if (i18n.mode === 'legacy') {
-        throw createI18nError(16);
+        throw createI18nError(16 /* NOT_AVAILABLE_IN_LEGACY_MODE */);
     }
     const i18nInternal = i18n;
     let composer = i18nInternal.__getInstance(instance);
@@ -8153,7 +9627,7 @@ function getComposer$1(i18n, target) {
     let current = target.parent;
     while (current != null) {
         const i18nInternal = i18n;
-        if (i18n.mode === 'composable') {
+        if (i18n.mode === 'composition') {
             composer = i18nInternal.__getInstance(current);
         }
         else {
@@ -8174,19 +9648,73 @@ function getComposer$1(i18n, target) {
     return composer;
 }
 function setupLifeCycle(i18n, target, composer) {
+    let emitter = null;
     onMounted(() => {
-        if (( __INTLIFY_PROD_DEVTOOLS__) && target.vnode.el) {
+        // inject composer instance to DOM for intlify-devtools
+        if (( __INTLIFY_PROD_DEVTOOLS__) &&
+            !false &&
+            target.vnode.el) {
             target.vnode.el.__INTLIFY__ = composer;
+            emitter = createEmitter();
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const _composer = composer;
+            _composer[EnableEmitter] && _composer[EnableEmitter](emitter);
+            emitter.on('*', addTimelineEvent);
         }
     }, target);
     onUnmounted(() => {
+        // remove composer instance from DOM for intlify-devtools
         if (( __INTLIFY_PROD_DEVTOOLS__) &&
+            !false &&
             target.vnode.el &&
             target.vnode.el.__INTLIFY__) {
+            emitter && emitter.off('*', addTimelineEvent);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const _composer = composer;
+            _composer[DisableEmitter] && _composer[DisableEmitter]();
             delete target.vnode.el.__INTLIFY__;
         }
         i18n.__deleteInstance(target);
     }, target);
+}
+const globalExportProps = [
+    'locale',
+    'fallbackLocale',
+    'availableLocales'
+];
+const globalExportMethods = ['t', 'd', 'n', 'tm'];
+function injectGlobalFields(app, composer) {
+    const i18n = Object.create(null);
+    globalExportProps.forEach(prop => {
+        const desc = Object.getOwnPropertyDescriptor(composer, prop);
+        if (!desc) {
+            throw createI18nError(20 /* UNEXPECTED_ERROR */);
+        }
+        const wrap = isRef(desc.value) // check computed props
+            ? {
+                get() {
+                    return desc.value.value;
+                },
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                set(val) {
+                    desc.value.value = val;
+                }
+            }
+            : {
+                get() {
+                    return desc.get && desc.get();
+                }
+            };
+        Object.defineProperty(i18n, prop, wrap);
+    });
+    app.config.globalProperties.$i18n = i18n;
+    globalExportMethods.forEach(method => {
+        const desc = Object.getOwnPropertyDescriptor(composer, method);
+        if (!desc) {
+            throw createI18nError(20 /* UNEXPECTED_ERROR */);
+        }
+        Object.defineProperty(app.config.globalProperties, `$${method}`, desc);
+    });
 }
 
 {
@@ -8196,9 +9724,11 @@ function setupLifeCycle(i18n, target, composer) {
 var script = {
   name: 'App',
   setup() {
-    return { ...useI18n({
+    const { t, locale } = useI18n({
       inheritLocale: true
-    }) }
+    });
+
+    return { t, locale }
   }
 };
 
@@ -8208,17 +9738,17 @@ const _hoisted_2 = /*#__PURE__*/createVNode("option", { value: "ja" }, "ja", -1 
 function render(_ctx, _cache, $props, $setup, $data, $options) {
   return (openBlock(), createBlock(Fragment, null, [
     createVNode("form", null, [
-      createVNode("label", null, toDisplayString(_ctx.t('language')), 1 /* TEXT */),
+      createVNode("label", null, toDisplayString($setup.t('language')), 1 /* TEXT */),
       withDirectives(createVNode("select", {
-        "onUpdate:modelValue": _cache[1] || (_cache[1] = $event => (_ctx.locale = $event))
+        "onUpdate:modelValue": _cache[1] || (_cache[1] = $event => ($setup.locale = $event))
       }, [
         _hoisted_1,
         _hoisted_2
       ], 512 /* NEED_PATCH */), [
-        [vModelSelect, _ctx.locale]
+        [vModelSelect, $setup.locale]
       ])
     ]),
-    createVNode("p", null, toDisplayString(_ctx.t('hello')), 1 /* TEXT */)
+    createVNode("p", null, toDisplayString($setup.t('hello')), 1 /* TEXT */)
   ], 64 /* STABLE_FRAGMENT */))
 }
 
@@ -8234,11 +9764,12 @@ script.render = render;
 script.__file = "examples/composable/App.vue";
 
 const i18n$1 = createI18n({
+  legacy: false,
   locale: 'ja',
   messages: {}
 });
 
-const app = createApp(script);
+const app$1 = createApp(script);
 
-app.use(i18n$1);
-app.mount('#app');
+app$1.use(i18n$1);
+app$1.mount('#app');
