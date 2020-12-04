@@ -9725,7 +9725,7 @@ var script = {
   name: 'App',
   setup() {
     const { t, locale } = useI18n({
-      inheritLocale: true
+      useScope: 'global'
     });
 
     return { t, locale }
@@ -9754,14 +9754,14 @@ function render(_ctx, _cache, $props, $setup, $data, $options) {
 
 function i18n(Component) {
   const options = typeof Component === 'function' ? Component.options : Component;
-  options.__i18n = options.__i18n || [];
-  options.__i18n.push({"en":{"language":"Language","hello":"hello, world!"},"ja":{"language":"言語","hello":"こんにちは、世界！"}});
+  options.__i18nGlobal = options.__i18nGlobal || [];
+  options.__i18nGlobal.push({"en":{"language":"Language","hello":"hello, world!"},"ja":{"language":"言語","hello":"こんにちは、世界！"}});
 }
 
 if (typeof i18n === 'function') i18n(script);
 
 script.render = render;
-script.__file = "examples/composable/App.vue";
+script.__file = "examples/globe/App.vue";
 
 const i18n$1 = createI18n({
   legacy: false,

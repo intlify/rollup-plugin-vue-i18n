@@ -1,4 +1,4 @@
-;['composable', 'legacy'].forEach(pattern => {
+;['composable', 'legacy', 'globe'].forEach(pattern => {
   describe(`${pattern}`, () => {
     beforeAll(async () => {
       await page.goto(`http://localhost:8080/${pattern}/`)

@@ -117,3 +117,22 @@ test('special characters', async () => {
     }
   ])
 })
+
+test('global', async () => {
+  const { module, code } = await bundleAndRun('global-mix.vue')
+  expect(code).toMatchSnapshot('code')
+  expect(module.__i18nGlobal).toMatchObject([
+    {
+      en: {
+        hello: 'hello global!'
+      }
+    }
+  ])
+  expect(module.__i18n).toMatchObject([
+    {
+      ja: {
+        hello: 'hello local!'
+      }
+    }
+  ])
+})
