@@ -1,4 +1,13 @@
 
+## v2.0.0-beta.2 (2020-12-04)
+
+#### :star: Features
+* [#53](https://github.com/intlify/rollup-plugin-vue-i18n/pull/53) feat: global attribute ([@kazupon](https://github.com/kazupon))
+
+#### Committers: 1
+- kazuya kawaguchi ([@kazupon](https://github.com/kazupon))
+
+
 ## v2.0.0-beta.1 (2020-09-14)
 
 #### :zap: Improvement Features
