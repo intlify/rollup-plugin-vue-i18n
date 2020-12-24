@@ -3,7 +3,7 @@
 ![Test](https://github.com/intlify/rollup-plugin-vue-i18n/workflows/Test/badge.svg)
 [![npm](https://img.shields.io/npm/v/@intlify/rollup-plugin-vue-i18n.svg)](https://www.npmjs.com/package/@intlify/rollup-plugin-vue-i18n)
 
-vue-i18n rollup plugin for custom blocks
+vue-i18n rollup plugin for i18n resource pre-compilation and custom blocks
 
 **NOTE:** :warning: This `next` branch is development branch for Vue 3! The stable version is now in [`master`](https://github.com/intlify/rollup-plugin-vue-i18n/tree/master) branch!
 
@@ -35,7 +35,55 @@ $ yarn add -D @intlify/rollup-plugin-vue-i18n@next
 
 ## :rocket: Usages
 
-the below example that `examples/composable/App.vue` have `i18n` custom block:
+### i18n resource pre-compilation
+
+Since vue-i18n@v9.0, The locale messages are handled with message compiler, which converts them to javascript functions after compiling. After compiling, message compiler converts them into javascript functions, which can improve the performance of the application.
+
+However, with the message compiler, the javascript function conversion will not work in some environments (e.g. CSP). For this reason, vue-i18n@v9.0 and later offer a full version that includes compiler and runtime, and a runtime only version.
+
+If you are using the runtime version, you will need to compile before importing locale messages by managing them in a file such as `.json`.
+
+#### Rollup Config
+
+The below rollup configi example:
+
+```js
+import VuePlugin from 'rollup-plugin-vue'
+import VueI18nPlugin from 'rollup-plugin-vue-i18n'
+import resolve from '@rollup/plugin-node-resolve'
+import commonjs from '@rollup/plugin-commonjs'
+import path from 'path'
+
+export default [
+  {
+    input: path.resolve(__dirname, `./path/to/src/main.js`),
+    output: {
+      file: path.resolve(__dirname, `./path/to/dist/index.js`),
+      format: 'cjs'
+    },
+    plugins: [
+      // set `customBlocks` opton to `rollup-plugin-vue`
+      VuePlugin({ customBlocks: ['i18n'] }),
+      // set `rollup-plugin-vue-i18n` after **`rollup-plugin-vue`**
+      VueI18nPlugin({
+        // `include` option for i18n resources bundling
+        include: path.resolve(__dirname, `./path/to/src/locales/**`)
+      }),
+      resolve(),
+      commonjs()
+    ]
+  }
+]
+```
+
+#### Notes on using with other i18n resource loading plugins
+
+If you use the plugin like `@rollup/plugin-json`, make sure that the i18n resource to be precompiled with `rollup-plugin-vue-i18n` is not loaded. you need to filter with the plugin options.
+
+
+### `i18n` custom block
+
+the below example that `examples/composition/App.vue` have `i18n` custom block:
 
 ```vue
 <template>
@@ -47,18 +95,23 @@ the below example that `examples/composable/App.vue` have `i18n` custom block:
     </select>
   </form>
   <p>{{ t('hello') }}</p>
+  <Banana />
 </template>
 
 <script>
 import { useI18n } from 'vue-i18n'
+import Banana from './Banana.vue'
 
 export default {
   name: 'App',
+  components: {
+    Banana
+  },
   setup() {
     const { t, locale } = useI18n({
-      inheritLocale: true
+      inheritLocale: true,
+      useScope: 'local'
     })
-
     return { t, locale }
   }
 }
@@ -76,37 +129,6 @@ export default {
   }
 }
 </i18n>
-
-```
-
-If you would like to bundle as common library with rollup, you can configure the following for ES Module:
-
-```js
-import vue from 'rollup-plugin-vue'
-import replace from '@rollup/plugin-replace'
-import resolve from '@rollup/plugin-node-resolve'
-import commonjs from '@rollup/plugin-commonjs'
-import i18n from '@intlify/rollup-plugin-vue-i18n'
-import path from 'path'
-
-export default [
-  {
-    input: path.resolve(__dirname, `./examples/composable/main.js`),
-    output: {
-      file: path.resolve(__dirname, `./examples/composable/index.js`),
-      format: 'cjs'
-    },
-    plugins: [
-      commonjs(),
-      resolve(),
-      replace({
-        'process.env.NODE_ENV': JSON.stringify('production')
-      }),
-      i18n(),
-      vue({ customBlocks: ['i18n'] })
-    ]
-  }
-]
 
 ```
 
@@ -129,6 +151,37 @@ ja:
 </i18n>
 ```
 
+### `forceStringify` options
+
+Whether pre-compile number and boolean values as message functions that return the string value, default `false`
+
+```ts
+import VuePlugin from 'rollup-plugin-vue'
+import VueI18nPlugin from 'rollup-plugin-vue-i18n'
+import resolve from '@rollup/plugin-node-resolve'
+import commonjs from '@rollup/plugin-commonjs'
+import path from 'path'
+
+export default [
+  {
+    input: path.resolve(__dirname, `./src/main.js`),
+    output: {
+      file: path.resolve(__dirname, `./dist/index.js`),
+      format: 'cjs'
+    },
+    plugins: [
+      VuePlugin({ customBlocks: ['i18n'] }),
+      VueI18nPlugin({
+        include: path.resolve(__dirname, `./path/to/src/locales/**`)
+        // `forceStringify` option
+        forceStringify: true
+      }),
+      resolve(),
+      commonjs()
+    ]
+  }
+]
+```
 
 ## :scroll: Changelog
 Details changes for each release are documented in the [CHANGELOG.md](https://github.com/intlify/rollup-plugin-vue-i18n/blob/master/CHANGELOG.md).

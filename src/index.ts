@@ -1,12 +1,15 @@
 import qs from 'querystring'
-import JSON5 from 'json5'
-import yaml from 'js-yaml'
+import path from 'path'
+import { isString } from '@intlify/shared'
+import { createFilter } from '@rollup/pluginutils'
+import { generateJSON, generateYAML } from './generator'
 import { Plugin } from 'rollup'
-import { createFilter } from 'rollup-pluginutils'
-import { friendlyJSONstringify } from 'vue-i18n'
-
 import { debug as Debug } from 'debug'
+
 const debug = Debug('rollup-plugin-vue-i18n')
+
+import type { CodeGenOptions, DevEnv } from './generator/codegen'
+import type { RollupPluginVueI18nOptions } from './options'
 
 type Query = {
   filename: string
@@ -22,59 +25,95 @@ type Query = {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-export default function i18n(options: Record<string, unknown>): Plugin {
-  const filter = createFilter([/vue&type=i18n/])
+export default function i18n(
+  options: RollupPluginVueI18nOptions = { forceStringify: false }
+): Plugin {
+  debug('options', options)
+  const filter = createFilter(options.include)
 
   return {
     name: 'rollup-plugin-vue-i18n',
+
     transform(source: string, id: string) {
+      debug('transform source', source)
       debug('transform id', id)
-      if (filter(id)) {
-        const query = parseVuePartRequest(id)
-        const variableName = query.global ? '__i18nGlobal' : '__i18n'
+      const query = parseVuePartRequest(id)
+      debug('transform query', query)
+      const { filename } = query
+      debug('condition', /\.(json5?|ya?ml)$/.test(filename) && filter(filename))
+      if (
+        isCustomBlock(query) ||
+        (/\.(json5?|ya?ml)$/.test(filename) && filter(filename))
+      ) {
+        const parseOptions = getOptions(
+          query,
+          options.forceStringify
+        ) as CodeGenOptions
+        debug('getOptions', parseOptions)
+
+        const langInfo = isCustomBlock(query)
+          ? isString(query.lang) && query.lang !== 'i18n'
+            ? query.lang
+            : 'json'
+          : path.parse(filename).ext
+        debug('langInfo', langInfo)
+
+        const generate = /json5?/.test(langInfo) ? generateJSON : generateYAML
+        const { code } = generate(source, parseOptions)
+        debug('code', code)
+        // TODO: source-map
         return {
-          code:
-            `export default function i18n(Component) {\n` +
-            `  const options = typeof Component === 'function' ? Component.options : Component\n` +
-            `  options.${variableName} = options.${variableName} || []\n` +
-            `  options.${variableName}.push(${stringify(
-              parse(source, query),
-              query
-            )})\n` +
-            `}`,
+          code,
           map: {
             mappings: ''
           }
         }
+      } else {
+        return null
       }
     }
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function stringify(data: any, query: Query): string {
-  const { locale } = query
-  if (locale) {
-    return friendlyJSONstringify(
-      Object.assign({}, { [locale as string]: data })
-    )
-  } else {
-    return friendlyJSONstringify(data)
-  }
+function isCustomBlock(query: Query): boolean {
+  // NOTE: set query type 'i18n' with rollup-plugin-vue
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return query.vue && (query as any)['type'] === 'i18n'
 }
 
-function parse(source: string, query: Query): string {
-  const value = source.trim()
-  const { lang } = query
-  switch (lang) {
-    case 'yaml':
-    case 'yml':
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return yaml.safeLoad(value) as any
-    case 'json5':
-      return JSON5.parse(value)
-    default:
-      return JSON.parse(value)
+function getOptions(
+  query: Query,
+  forceStringify = false
+): Record<string, unknown> {
+  const { filename } = query
+  const mode: DevEnv =
+    process.env.NODE_ENV === 'production' || process.env.BUILD === 'production'
+      ? 'production'
+      : 'development'
+
+  const baseOptions = {
+    filename,
+    forceStringify,
+    env: mode as DevEnv,
+    onWarn: (msg: string): void => {
+      console.warn(`[rollup-plugin-vue-i18n]: ${filename} ${msg}`)
+    },
+    onError: (msg: string): void => {
+      console.error(`[rollup-plugin-vue-i18n]: ${filename} ${msg}`)
+    }
+  }
+
+  if (isCustomBlock(query)) {
+    return Object.assign(baseOptions, {
+      type: 'sfc',
+      locale: isString(query.locale) ? query.locale : '',
+      isGlobal: query.global != null
+    })
+  } else {
+    return Object.assign(baseOptions, {
+      type: 'plain',
+      isGlobal: false
+    })
   }
 }
 

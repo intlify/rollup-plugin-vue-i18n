@@ -2,7 +2,7 @@ coverage
 node_modules
 examples/legacy/index.js
 examples/global/index.js
-examples/compsable/index.js
+examples/composition/index.js
 .DS_Store
 lib
 *.log

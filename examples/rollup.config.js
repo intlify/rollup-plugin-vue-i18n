@@ -4,6 +4,9 @@ import resolve from '@rollup/plugin-node-resolve'
 import commonjs from '@rollup/plugin-commonjs'
 import path from 'path'
 
+// NOTE:
+//  load rollup-plugin-vue-18n from local.
+//  In general, use `requirie('rollup-plugin-vue-i18n')`
 const i18n = require(path.resolve(__dirname, '../lib/index.js')).default
 
 export default [
@@ -14,13 +17,17 @@ export default [
       format: 'cjs'
     },
     plugins: [
-      commonjs(),
-      resolve(),
       replace({
         'process.env.NODE_ENV': JSON.stringify('production')
       }),
-      i18n(),
-      VuePlugin({ customBlocks: ['i18n'] })
+      VuePlugin({ customBlocks: ['i18n'] }),
+      // set `rollup-plugin-vue-i18n` after **`rollup-plugin-vue`**
+      i18n({
+        // `include` option for i18n resources bundling
+        include: path.resolve(__dirname, `./${process.env.BUILD}/locales/**`)
+      }),
+      resolve(),
+      commonjs()
     ]
   }
 ]
