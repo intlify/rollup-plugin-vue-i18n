@@ -1,4 +1,13 @@
 
+## v2.0.0-beta.3 (2020-12-24)
+
+#### :star: Features
+* [#60](https://github.com/intlify/rollup-plugin-vue-i18n/pull/60) feat: pre-compilation ([@kazupon](https://github.com/kazupon))
+
+#### Committers: 1
+- kazuya kawaguchi ([@kazupon](https://github.com/kazupon))
+
+
 ## v2.0.0-beta.2 (2020-12-04)
 
 #### :star: Features
