@@ -6,13 +6,15 @@ import I18nPlugin from '../src/index'
 import { JSDOM, VirtualConsole } from 'jsdom'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function bundle(fixture: string, options = {}) {
+export function bundle(fixture: string, options: Record<string, unknown> = {}) {
+  const input = (options.input as string) || './fixtures/entry.js'
+  const target = (options.target as string) || './fixtures'
   return rollup({
-    input: path.resolve(__dirname, './fixtures/entry.js'),
+    input: path.resolve(__dirname, input),
     plugins: [
       alias({
         entries: {
-          '~target': path.resolve(__dirname, './fixtures', fixture)
+          '~target': path.resolve(__dirname, target, fixture)
         }
       }),
       I18nPlugin(options),
@@ -28,8 +30,11 @@ export function bundle(fixture: string, options = {}) {
     .then(generated => generated.output[0])
 }
 
-export async function bundleAndRun(fixture: string, config = {}) {
-  const { code } = await bundle(fixture, config)
+export async function bundleAndRun(
+  fixture: string,
+  options: Record<string, unknown> = {}
+) {
+  const { code } = await bundle(fixture, options)
 
   let dom: JSDOM | null = null
   let jsdomError
@@ -55,7 +60,6 @@ export async function bundleAndRun(fixture: string, config = {}) {
     window,
     module,
     exports,
-    code,
     jsdomError
   })
 }

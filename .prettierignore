@@ -1,3 +1,6 @@
 lib
 coverage
 tsconfig.json
+examples/composition/index.js
+examples/global/index.js
+examples/legacy/index.js
