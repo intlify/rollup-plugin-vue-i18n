@@ -2,13 +2,13 @@ import qs from 'querystring'
 import path from 'path'
 import { isString } from '@intlify/shared'
 import { createFilter } from '@rollup/pluginutils'
-import { generateJSON, generateYAML } from './generator'
+import { generateJSON, generateYAML } from '@intlify/cli'
 import { Plugin } from 'rollup'
 import { debug as Debug } from 'debug'
 
 const debug = Debug('rollup-plugin-vue-i18n')
 
-import type { CodeGenOptions, DevEnv } from './generator/codegen'
+import type { CodeGenOptions, DevEnv } from '@intlify/cli'
 import type { RollupPluginVueI18nOptions } from './options'
 
 type Query = {
