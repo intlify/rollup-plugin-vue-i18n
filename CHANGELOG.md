@@ -1,4 +1,10 @@
+## v2.0.0-beta.4 (2020-12-31)
 
+#### Refactoring
+* [#62](https://github.com/intlify/rollup-plugin-vue-i18n/pull/62) refactor: use @intlify/cli internal API ([@kazupon](https://github.com/kazupon))
+
+#### Committers: 1
+- kazuya kawaguchi ([@kazupon](https://github.com/kazupon))
 
 
 ## v2.0.0-beta.3 (2020-12-24)
