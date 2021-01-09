@@ -19,6 +19,11 @@ You need to install the follwoing:
 If you use rollup-plugin-vue, We recommend you should read the [docs](https://rollup-plugin-vue.vuejs.org/)
 
 
+## :star: Features
+- i18n resources pre-compilation
+- i18n custom block
+
+
 ## :cd: Installation
 
 ### NPM
@@ -78,7 +83,7 @@ export default [
 
 #### Notes on using with other i18n resource loading plugins
 
-If you use the plugin like `@rollup/plugin-json`, make sure that the i18n resource to be precompiled with `rollup-plugin-vue-i18n` is not loaded. you need to filter with the plugin options.
+If you use the plugin like `@rollup/plugin-json`, make sure that the i18n resource to be pre-compiled with `rollup-plugin-vue-i18n` is not loaded. you need to filter with the plugin options.
 
 
 ### `i18n` custom block
@@ -151,37 +156,81 @@ ja:
 </i18n>
 ```
 
-### `forceStringify` options
+## :wrench: Options
 
-Whether pre-compile number and boolean values as message functions that return the string value, default `false`
+### `include`
 
-```ts
-import VuePlugin from 'rollup-plugin-vue'
-import VueI18nPlugin from 'rollup-plugin-vue-i18n'
-import resolve from '@rollup/plugin-node-resolve'
-import commonjs from '@rollup/plugin-commonjs'
-import path from 'path'
+- **Type:** `string | string[] | undefined`
+- **Default:** `undefined`
 
-export default [
+  A [minimatch](https://github.com/isaacs/minimatch) pattern, or array of patterns, you can specify a path to pre-compile i18n resources files. The extensions of i18n resources to be precompiled are as follows:
+
+  ```
+  - json
+  - json5
+  - yaml
+  - yml
+  ```
+
+
+### `forceStringify`
+
+- **Type:** `boolean`
+- **Default:** `false`
+
+  Whether pre-compile number and boolean values as message functions that return the string value.
+
+  for example, the following json resources:
+
+  ```json
   {
-    input: path.resolve(__dirname, `./src/main.js`),
-    output: {
-      file: path.resolve(__dirname, `./dist/index.js`),
-      format: 'cjs'
-    },
-    plugins: [
-      VuePlugin({ customBlocks: ['i18n'] }),
-      VueI18nPlugin({
-        include: path.resolve(__dirname, `./path/to/src/locales/**`)
-        // `forceStringify` option
-        forceStringify: true
-      }),
-      resolve(),
-      commonjs()
-    ]
+    "trueValue": true,
+    "falseValue": false,
+    "nullValue": null,
+    "numberValue": 1
   }
-]
-```
+  ```
+
+  after pre-compiled (development):
+
+  ```js
+  export default {
+    "trueValue": (()=>{const fn=(ctx) => {const { normalize: _normalize } = ctx;return _normalize(["true"])};fn.source="true";return fn;})(),
+    "falseValue": (()=>{const fn=(ctx) => {const { normalize: _normalize } = ctx;return _normalize(["false"])};fn.source="false";return fn;})(),
+    "nullValue": (()=>{const fn=(ctx) => {const { normalize: _normalize } = ctx;return _normalize(["null"])};fn.source="null";return fn;})(),
+    "numberValue": (()=>{const fn=(ctx) => {const { normalize: _normalize } = ctx;return _normalize(["1"])};fn.source="1";return fn;})()
+  }
+  ```
+
+  Configration example:
+
+  ```ts
+  import VuePlugin from 'rollup-plugin-vue'
+  import VueI18nPlugin from 'rollup-plugin-vue-i18n'
+  import resolve from '@rollup/plugin-node-resolve'
+  import commonjs from '@rollup/plugin-commonjs'
+  import path from 'path'
+
+  export default [
+    {
+      input: path.resolve(__dirname, `./src/main.js`),
+      output: {
+        file: path.resolve(__dirname, `./dist/index.js`),
+        format: 'cjs'
+      },
+      plugins: [
+        VuePlugin({ customBlocks: ['i18n'] }),
+        VueI18nPlugin({
+          include: path.resolve(__dirname, `./path/to/src/locales/**`)
+          // `forceStringify` option
+          forceStringify: true
+        }),
+        resolve(),
+        commonjs()
+      ]
+    }
+  ]
+  ```
 
 ## :scroll: Changelog
 Details changes for each release are documented in the [CHANGELOG.md](https://github.com/intlify/rollup-plugin-vue-i18n/blob/master/CHANGELOG.md).
