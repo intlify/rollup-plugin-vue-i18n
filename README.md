@@ -7,7 +7,7 @@ vue-i18n rollup plugin for i18n resource pre-compilation and custom blocks
 
 **NOTE:** :warning: This `next` branch is development branch for Vue 3! The stable version is now in [`master`](https://github.com/intlify/rollup-plugin-vue-i18n/tree/master) branch!
 
-## Status: Beta ![Test](https://github.com/intlify/rollup-plugin-vue-i18n/workflows/Test/badge.svg)
+## Status: RC ![Test](https://github.com/intlify/rollup-plugin-vue-i18n/workflows/Test/badge.svg)
 
 
 ## :exclamation: Requirement
