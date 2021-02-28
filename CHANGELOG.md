@@ -1,3 +1,12 @@
+
+## v2.0.1 (2021-02-28)
+
+#### :zap: Improvement Features
+* [#72](https://github.com/intlify/rollup-plugin-vue-i18n/pull/72) upgrade deps ([@kazupon](https://github.com/kazupon))
+
+#### Committers: 1
+- kazuya kawaguchi ([@kazupon](https://github.com/kazupon))
+
 ## v2.0.0 (2021-03-01)
 
 #### Committers: 1
