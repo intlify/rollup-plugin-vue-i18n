@@ -1,13 +1,12 @@
 # :globe_with_meridians: @intlify/rollup-plugin-vue-i18n
 
 ![Test](https://github.com/intlify/rollup-plugin-vue-i18n/workflows/Test/badge.svg)
+[![npm](https://img.shields.io/npm/v/@intlify/rollup-plugin-vue-i18n/next.svg)](https://www.npmjs.com/package/@intlify/rollup-plugin-vue-i18n)
 [![npm](https://img.shields.io/npm/v/@intlify/rollup-plugin-vue-i18n.svg)](https://www.npmjs.com/package/@intlify/rollup-plugin-vue-i18n)
 
 vue-i18n rollup plugin for i18n resource pre-compilation and custom blocks
 
 **NOTE:** :warning: This `next` branch is development branch for Vue 3! The version for Vue 2 is now in [`master`](https://github.com/intlify/rollup-plugin-vue-i18n/tree/master) branch!
-
-## Status: ![Test](https://github.com/intlify/rollup-plugin-vue-i18n/workflows/Test/badge.svg)
 
 
 ## :exclamation: Requirement
