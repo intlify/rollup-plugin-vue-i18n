@@ -53,7 +53,7 @@ The below rollup configi example:
 
 ```js
 import VuePlugin from 'rollup-plugin-vue'
-import VueI18nPlugin from 'rollup-plugin-vue-i18n'
+import VueI18nPlugin from '@intlify/rollup-plugin-vue-i18n'
 import resolve from '@rollup/plugin-node-resolve'
 import commonjs from '@rollup/plugin-commonjs'
 import path from 'path'
