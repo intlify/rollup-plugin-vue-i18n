@@ -1,9 +1,15 @@
 # :globe_with_meridians: @intlify/rollup-plugin-vue-i18n
 
 ![Test](https://github.com/intlify/rollup-plugin-vue-i18n/workflows/Test/badge.svg)
-[![npm](https://img.shields.io/npm/v/@intlify/rollup-plugin-vue-i18n.svg)](https://www.npmjs.com/package/@intlify/rollup-plugin-vue-i18n)
 
-vue-i18n rollup plugin for custom blocks
+Rollup plugin for Vue I18n
+
+
+## :warning: Notice
+
+This package is maintained for Vue I18n v8 (Vue 2).
+
+If you want to use Vue I18n v9 (Vue 3) or later, See the [`@intlify/bundle-tools`](https://github.com/intlify/bundle-tools) repo.
 
 
 ## :exclamation: Requirement
